@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Sprint · Banco Guayaquil</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a1a;font-size:14px}
+.splash{min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.splash-logo{font-size:12px;font-weight:700;color:#185FA5;letter-spacing:.06em;text-transform:uppercase}
+.splash-title{font-size:20px;font-weight:700;color:#1a1a1a}
+.splash-sub{font-size:13px;color:#aaa}
+.spinner{width:28px;height:28px;border:3px solid #e0e0dc;border-top-color:#185FA5;border-radius:50%;animation:spin .7s linear infinite;margin-top:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;align-items:center;justify-content:center;padding:2rem}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:12px;padding:1.75rem;width:100%;max-width:420px}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:4px}
+.modal-sub{font-size:13px;color:#888;margin-bottom:1.25rem}
+.field-label{font-size:12px;color:#555;font-weight:500;margin-bottom:4px}
+.field-wrap{margin-bottom:14px}
+select,input[type=text],input[type=password]{width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a1a;background:#fafafa;outline:none;transition:border-color .15s}
+select:focus,input:focus{border-color:#378ADD;background:#fff}
+.modal-actions{display:flex;gap:8px;margin-top:4px}
+.btn{padding:9px 18px;font-size:13px;font-weight:600;border:none;border-radius:8px;cursor:pointer;transition:background .15s}
+.btn-primary{background:#185FA5;color:#fff;flex:1}
+.btn-primary:hover{background:#0C447C}
+.btn-primary:disabled{background:#B5D4F4;cursor:not-allowed}
+.btn-cancel{background:#f0f0ee;color:#555}
+.btn-cancel:hover{background:#e0e0dc}
+.loading-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#888;margin-top:6px}
+.spinner-sm{width:12px;height:12px;border:2px solid #ddd;border-top-color:#185FA5;border-radius:50%;animation:spin .7s linear infinite}
+.err-modal{font-size:12px;color:#A32D2D;background:#FCEBEB;padding:8px 12px;border-radius:8px;margin-top:8px;display:none;border:1px solid #F7C1C1}
+.db{display:none;padding:1.5rem 2rem 3rem;max-width:1200px;margin:0 auto}
+.db-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:10px}
+.db-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.db-title{font-size:18px;font-weight:700}
+.db-proyecto-badge{font-size:12px;font-weight:600;background:#EAF3DE;color:#27500A;padding:4px 12px;border-radius:20px}
+.db-team-badge{font-size:12px;font-weight:600;background:#E6F1FB;color:#0C447C;padding:4px 12px;border-radius:20px}
+.db-sprint-badge{font-size:12px;font-weight:600;background:#F1EFE8;color:#444441;padding:4px 12px;border-radius:20px}
+.db-meta{font-size:11px;color:#aaa;margin-top:3px}
+.header-actions{display:flex;gap:8px}
+.btn-sm{font-size:12px;padding:6px 14px;background:#fff;border:1px solid #ddd;border-radius:8px;cursor:pointer;font-weight:500}
+.btn-sm:hover{background:#f0f0ee}
+.btn-sm.primary{background:#185FA5;color:#fff;border-color:#185FA5}
+.btn-sm.primary:hover{background:#0C447C}
+.semaforo{border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:1.25rem;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap}
+.semaforo.verde{background:#EAF3DE;border:1px solid #C0DD97}
+.semaforo.amarillo{background:#FAEEDA;border:1px solid #FAC775}
+.semaforo.rojo{background:#FCEBEB;border:1px solid #F7C1C1}
+.semaforo.gris{background:#F1EFE8;border:1px solid #D3D1C7}
+.sem-dot{width:44px;height:44px;border-radius:50%;flex-shrink:0}
+.verde .sem-dot{background:#639922}.amarillo .sem-dot{background:#BA7517}.rojo .sem-dot{background:#E24B4A}.gris .sem-dot{background:#888780}
+.sem-label{font-size:20px;font-weight:700}
+.verde .sem-label{color:#27500A}.amarillo .sem-label{color:#412402}.rojo .sem-label{color:#501313}.gris .sem-label{color:#444441}
+.sem-sub{font-size:13px;margin-top:3px}
+.verde .sem-sub{color:#3B6D11}.amarillo .sem-sub{color:#633806}.rojo .sem-sub{color:#791F1F}.gris .sem-sub{color:#5F5E5A}
+.sem-stats{display:flex;gap:2rem;margin-left:auto;flex-wrap:wrap}
+.sem-stat{text-align:center}
+.sem-stat-val{font-size:24px;font-weight:700}
+.verde .sem-stat-val{color:#27500A}.amarillo .sem-stat-val{color:#412402}.rojo .sem-stat-val{color:#501313}.gris .sem-stat-val{color:#444441}
+.sem-stat-lbl{font-size:11px;color:#888;margin-top:2px}
+.progress-card{background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem}
+.progress-header{display:flex;justify-content:space-between;margin-bottom:10px}
+.progress-title{font-size:13px;font-weight:600}
+.progress-pct{font-size:13px;font-weight:700;color:#185FA5}
+.progress-bg{width:100%;height:10px;background:#f0f0ee;border-radius:5px;overflow:hidden}
+.progress-fill{height:100%;border-radius:5px;transition:width .4s}
+.progress-labels{display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:#aaa}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:1.25rem}
+.metric{background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:1rem 1.25rem}
+.metric-lbl{font-size:11px;color:#888;margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+.metric-val{font-size:26px;font-weight:700;color:#1a1a1a}
+.metric-val.red{color:#A32D2D}
+.metric-sub{font-size:11px;color:#aaa;margin-top:4px}
+.card{background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:1.25rem;margin-bottom:14px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.card-title{font-size:13px;font-weight:600}
+.filter-row{display:flex;gap:6px;flex-wrap:wrap}
+.filter-btn{font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid #ddd;background:#fff;cursor:pointer;color:#555}
+.filter-btn.active{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+.filter-btn:hover:not(.active){background:#f0f0ee}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{font-size:11px;font-weight:600;color:#888;text-align:left;padding:8px 10px;border-bottom:1px solid #eee;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+td{padding:10px;border-bottom:1px solid #f5f5f3;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafaf8}
+.td-title{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.pill{display:inline-block;font-size:10px;font-weight:600;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.pill-doing{background:#E6F1FB;color:#0C447C}
+.pill-blocked{background:#FAEEDA;color:#633806}
+.pill-review{background:#EEEDFE;color:#3C3489}
+.pill-done{background:#EAF3DE;color:#27500A}
+.pill-backlog{background:#F1EFE8;color:#5F5E5A}
+.avatar-sm{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#E6F1FB;color:#0C447C;font-size:10px;font-weight:600;margin-right:5px;flex-shrink:0;vertical-align:middle}
+.area-tag{font-size:10px;padding:2px 8px;border-radius:20px;background:#F1EFE8;color:#444441;border:1px solid #D3D1C7}
+.atraso-ok{color:#27500A;font-size:11px;font-weight:600}
+.atraso-low{color:#BA7517;font-weight:600}
+.atraso-high{color:#A32D2D;font-weight:700}
+.atraso-nd{color:#ccc;font-size:11px}
+.alert-campos{background:#E6F1FB;border:1px solid #B5D4F4;border-radius:10px;padding:12px 16px;margin-bottom:1.25rem;font-size:13px;color:#0C447C;display:none}
+@media(max-width:700px){.db{padding:1rem}.metrics{grid-template-columns:1fr 1fr}.sem-stats{margin-left:0}}
+</style>
+</head>
+<body>
+
+<div class="splash" id="splash">
+  <div class="splash-logo">TribuDatayAnalitica · Banco Guayaquil</div>
+  <div class="splash-title">Dashboard de sprint</div>
+  <div class="splash-sub" id="splash-sub">Leyendo configuración...</div>
+  <div class="spinner"></div>
+</div>
+
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <div class="modal-title">Seleccionar contexto</div>
+    <div class="modal-sub">Elige proyecto, equipo y sprint en cascada.</div>
+    <div class="field-wrap">
+      <div class="field-label">Proyecto</div>
+      <select id="sel-proyecto" onchange="onProyectoChange()">
+        <option value="">— Selecciona un proyecto —</option>
+      </select>
+    </div>
+    <div class="field-wrap" id="wrap-equipo" style="display:none">
+      <div class="field-label">Equipo</div>
+      <select id="sel-equipo" onchange="cargarSprints()">
+        <option value="">— Selecciona un equipo —</option>
+      </select>
+    </div>
+    <div class="field-wrap" id="wrap-sprint" style="display:none">
+      <div class="field-label">Sprint</div>
+      <select id="sel-sprint">
+        <option value="" data-label="Todos">Todos los sprints</option>
+      </select>
+    </div>
+    <div class="loading-row" id="loading-sprints" style="display:none">
+      <div class="spinner-sm"></div><span>Cargando sprints...</span>
+    </div>
+    <div class="err-modal" id="err-modal"></div>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="cerrarModal()" id="btn-cancelar">Cancelar</button>
+      <button class="btn btn-primary" id="btn-modal-ver" onclick="aplicarSeleccion()" disabled>Ver dashboard</button>
+    </div>
+  </div>
+</div>
+
+<div class="db" id="dashboard">
+  <div class="db-header">
+    <div>
+      <div class="db-left">
+        <div class="db-title">Estado del sprint</div>
+        <span class="db-proyecto-badge" id="db-proyecto-badge">—</span>
+        <span class="db-team-badge" id="db-team-badge">—</span>
+        <span class="db-sprint-badge" id="db-sprint-badge">—</span>
+      </div>
+      <div class="db-meta" id="db-meta">Cargando...</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-sm" onclick="recargar()">Actualizar</button>
+      <button class="btn-sm primary" onclick="abrirModal()">Cambiar proyecto</button>
+    </div>
+  </div>
+  <div class="alert-campos" id="alert-campos">
+    <strong>Campos sin llenar:</strong> <span id="alert-txt"></span>
+  </div>
+  <div class="semaforo gris" id="semaforo">
+    <div class="sem-dot"></div>
+    <div>
+      <div class="sem-label" id="sem-label">—</div>
+      <div class="sem-sub" id="sem-sub">Cargando...</div>
+    </div>
+    <div class="sem-stats">
+      <div class="sem-stat"><div class="sem-stat-val" id="sem-done">—</div><div class="sem-stat-lbl">Done</div></div>
+      <div class="sem-stat"><div class="sem-stat-val" id="sem-total">—</div><div class="sem-stat-lbl">Total</div></div>
+      <div class="sem-stat"><div class="sem-stat-val" id="sem-pct">—</div><div class="sem-stat-lbl">Completado</div></div>
+    </div>
+  </div>
+  <div class="progress-card">
+    <div class="progress-header">
+      <div class="progress-title">Progreso del sprint</div>
+      <div class="progress-pct" id="prog-pct">0%</div>
+    </div>
+    <div class="progress-bg"><div class="progress-fill" id="prog-fill" style="width:0%;background:#639922"></div></div>
+    <div class="progress-labels"><span>Inicio</span><span id="prog-mid"></span><span>Meta: 100%</span></div>
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-lbl">Items atrasados</div>
+      <div class="metric-val red" id="m-atrasados">—</div>
+      <div class="metric-sub" id="m-atrasados-sub">con due date vencida</div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">Bloqueados ahora</div>
+      <div class="metric-val red" id="m-blocked">—</div>
+      <div class="metric-sub">requieren acción hoy</div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">En progreso</div>
+      <div class="metric-val" id="m-doing">—</div>
+      <div class="metric-sub" id="m-doing-sub">personas activas</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Items del sprint — ordenados por urgencia</div>
+      <div class="filter-row">
+        <button class="filter-btn active" onclick="filtrar('todos',this)">Todos</button>
+        <button class="filter-btn" onclick="filtrar('atrasados',this)">Atrasados</button>
+        <button class="filter-btn" onclick="filtrar('bloqueados',this)">Bloqueados</button>
+        <button class="filter-btn" onclick="filtrar('doing',this)">En progreso</button>
+        <button class="filter-btn" onclick="filtrar('done',this)">Done</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:33%">Título</th>
+            <th style="width:18%">Responsable</th>
+            <th style="width:12%">Estado</th>
+            <th style="width:13%">Área cliente</th>
+            <th style="width:12%">Due date</th>
+            <th style="width:12%">Atraso</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let _cfg={}, _proyecto='', _teamName='', _sprintPath='', _sprintLabel='';
+let _allItems=[], _filtroActual='todos';
+
+function hdrs(){return{'Authorization':'Basic '+btoa(':'+_cfg.PAT),'Content-Type':'application/json'}}
+function saveMemory(){localStorage.setItem('db_proyecto',_proyecto);localStorage.setItem('db_team',_teamName);localStorage.setItem('db_sprint',_sprintPath);localStorage.setItem('db_sprint_label',_sprintLabel)}
+function loadMemory(){return{proyecto:localStorage.getItem('db_proyecto')||'',team:localStorage.getItem('db_team')||'',sprint:localStorage.getItem('db_sprint')||'',sprintLabel:localStorage.getItem('db_sprint_label')||'Todos'}}
+function showErr(m){const e=document.getElementById('err-modal');e.textContent=m;e.style.display='block'}
+function hideErr(){document.getElementById('err-modal').style.display='none'}
+function initials(n){if(!n)return'?';const p=n.split(' ').filter(Boolean);return p.length>=2?(p[0][0]+p[p.length-1][0]).toUpperCase():n.substring(0,2).toUpperCase()}
+function pillState(s){const m={'Doing':'pill-doing','Blocked':'pill-blocked','Revisión Calidad':'pill-review','Done':'pill-done','Backlog':'pill-backlog'};return`<span class="pill ${m[s]||'pill-backlog'}">${s}</span>`}
+function diasAtraso(due,state){if(!due||state==='Done')return null;return Math.floor((new Date().setHours(0,0,0,0)-new Date(due))/86400000)}
+function renderAtraso(dias,due){if(!due)return'<span class="atraso-nd">sin fecha</span>';if(dias===null||dias<=0)return`<span class="atraso-ok">${dias===null?'—':`Faltan ${Math.abs(dias)}d`}</span>`;if(dias<=3)return`<span class="atraso-low">+${dias}d</span>`;return`<span class="atraso-high">+${dias}d</span>`}
+function renderDue(due,dias){if(!due)return'<span style="color:#ccc">—</span>';const s=new Date(due).toLocaleDateString('es-EC',{day:'2-digit',month:'short'});return dias>0?`<span style="color:#A32D2D;font-weight:600">${s}</span>`:`<span style="color:#27500A">${s}</span>`}
+function urgencia(item){const f=item.fields,s=f['System.State'],d=diasAtraso(f['Microsoft.VSTS.Scheduling.DueDate'],s);if(s==='Blocked')return 0;if(d>3)return 1;if(d>0)return 2;if(s==='Doing')return 3;if(s==='Revisión Calidad')return 4;if(s==='Backlog')return 5;if(s==='Done')return 99;return 6}
+
+async function parsearConfig(){
+  const r=await fetch('config.txt');
+  if(!r.ok)throw new Error('No se encontró config.txt junto al dashboard.');
+  const txt=await r.text();
+  const cfg={};
+  txt.split('\n').forEach(line=>{
+    line=line.trim();
+    if(!line||line.startsWith('#'))return;
+    const idx=line.indexOf('=');
+    if(idx<0)return;
+    cfg[line.substring(0,idx).trim()]=line.substring(idx+1).trim();
+  });
+  if(!cfg.PAT||cfg.PAT==='pega_tu_pat_aqui')throw new Error('Edita config.txt y reemplaza el PAT con tu token real.');
+  if(!cfg.PROYECTOS)throw new Error('Agrega la línea PROYECTOS= en config.txt');
+  return cfg;
+}
+
+function getEquiposDeProyecto(proyecto){
+  return(_cfg['EQUIPOS_'+proyecto]||'').split(',').map(e=>e.trim()).filter(Boolean);
+}
+
+function poblarProyectos(){
+  const proyectos=_cfg.PROYECTOS.split(',').map(p=>p.trim()).filter(Boolean);
+  const sel=document.getElementById('sel-proyecto');
+  sel.innerHTML='<option value="">— Selecciona un proyecto —</option>';
+  proyectos.forEach(p=>{const opt=document.createElement('option');opt.value=p;opt.textContent=p;sel.appendChild(opt)});
+  return proyectos;
+}
+
+function onProyectoChange(){
+  const proyecto=document.getElementById('sel-proyecto').value;
+  const wrapEquipo=document.getElementById('wrap-equipo');
+  const wrapSprint=document.getElementById('wrap-sprint');
+  document.getElementById('btn-modal-ver').disabled=true;
+  hideErr();
+  wrapSprint.style.display='none';
+  if(!proyecto){wrapEquipo.style.display='none';return}
+  const equipos=getEquiposDeProyecto(proyecto);
+  const sel=document.getElementById('sel-equipo');
+  sel.innerHTML='<option value="">— Selecciona un equipo —</option>';
+  equipos.forEach(eq=>{const opt=document.createElement('option');opt.value=eq;opt.textContent=eq;sel.appendChild(opt)});
+  wrapEquipo.style.display=equipos.length?'block':'none';
+  if(!equipos.length)showErr('No hay equipos para '+proyecto+'. Agrega EQUIPOS_'+proyecto+'= en config.txt');
+}
+
+async function cargarSprints(){
+  const proyecto=document.getElementById('sel-proyecto').value;
+  const equipo=document.getElementById('sel-equipo').value;
+  const wrapSprint=document.getElementById('wrap-sprint');
+  const btnVer=document.getElementById('btn-modal-ver');
+  const loading=document.getElementById('loading-sprints');
+  hideErr();wrapSprint.style.display='none';btnVer.disabled=true;
+  if(!equipo)return;
+  loading.style.display='flex';
+  try{
+    const r=await fetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(proyecto)}/${encodeURIComponent(equipo)}/_apis/work/teamsettings/iterations?api-version=7.1`,{headers:hdrs()});
+    if(!r.ok)throw new Error(`No se pudieron cargar sprints (${r.status}).`);
+    const data=await r.json();
+    const iterations=(data.value||[]).reverse();
+    const sel=document.getElementById('sel-sprint');
+    sel.innerHTML='<option value="" data-label="Todos">Todos los sprints</option>';
+    iterations.forEach(it=>{
+      const opt=document.createElement('option');
+      opt.value=it.path;
+      const activo=it.attributes&&it.attributes.timeFrame==='current';
+      opt.textContent=it.name+(activo?' ✓ activo':'');
+      opt.dataset.label=it.name;
+      if(activo)opt.selected=true;
+      sel.appendChild(opt);
+    });
+    wrapSprint.style.display='block';btnVer.disabled=false;
+  }catch(e){showErr(e.message)}
+  finally{loading.style.display='none'}
+}
+
+async function aplicarSeleccion(){
+  const proyecto=document.getElementById('sel-proyecto').value;
+  const equipo=document.getElementById('sel-equipo').value;
+  const selSprint=document.getElementById('sel-sprint');
+  if(!proyecto){showErr('Selecciona un proyecto.');return}
+  if(!equipo){showErr('Selecciona un equipo.');return}
+  _proyecto=proyecto;_teamName=equipo;
+  _sprintPath=selSprint.value;
+  _sprintLabel=selSprint.selectedOptions[0]?.dataset?.label||'Todos';
+  saveMemory();cerrarModal();
+  await cargarYRenderizar();
+}
+
+function abrirModal(){
+  hideErr();
+  poblarProyectos();
+  if(_proyecto){
+    document.getElementById('sel-proyecto').value=_proyecto;
+    onProyectoChange();
+    if(_teamName){
+      document.getElementById('sel-equipo').value=_teamName;
+      cargarSprints();
+    }
+  }
+  document.getElementById('modal-bg').classList.add('open');
+  document.getElementById('btn-cancelar').style.display=_teamName?'block':'none';
+}
+
+function cerrarModal(){document.getElementById('modal-bg').classList.remove('open')}
+
+async function wiqlQuery(){
+  let where=`[System.WorkItemType] = 'User Story' AND [System.State] <> 'Cancelled'`;
+  if(_sprintPath)where+=` AND [System.IterationPath] = '${_sprintPath}'`;
+  const areaPath=`${_proyecto}\\${_teamName}`;
+  const body={query:`SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${_proyecto}' AND [System.AreaPath] UNDER '${areaPath}' AND ${where} ORDER BY [System.ChangedDate] DESC`};
+  const r=await fetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(_proyecto)}/_apis/wit/wiql?api-version=7.1`,{method:'POST',headers:hdrs(),body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(`WIQL ${r.status}: ${await r.text()}`);
+  return((await r.json()).workItems||[]).map(w=>w.id);
+}
+
+async function fetchItems(ids){
+  if(!ids.length)return[];
+  const fields=['System.Title','System.State','System.AssignedTo','Microsoft.VSTS.Scheduling.StoryPoints','Microsoft.VSTS.Scheduling.DueDate','System.Tags','System.IterationPath','Custom.Departamento'].join(',');
+  let all=[];
+  for(let i=0;i<ids.length;i+=200){
+    const chunk=ids.slice(i,i+200);
+    const r=await fetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(_proyecto)}/_apis/wit/workitems?ids=${chunk.join(',')}&fields=${fields}&api-version=7.1`,{headers:hdrs()});
+    if(!r.ok)throw new Error(`Items ${r.status}`);
+    all=all.concat((await r.json()).value);
+  }
+  return all;
+}
+
+async function cargarYRenderizar(){
+  document.getElementById('splash').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('db-proyecto-badge').textContent=_proyecto;
+  document.getElementById('db-team-badge').textContent=_teamName;
+  document.getElementById('db-sprint-badge').textContent=_sprintLabel||'Todos';
+  document.getElementById('db-meta').textContent='Cargando datos...';
+  try{const ids=await wiqlQuery();const items=ids.length?await fetchItems(ids):[];renderDashboard(items)}
+  catch(e){document.getElementById('db-meta').textContent='Error: '+e.message}
+}
+
+function renderDashboard(items){
+  _allItems=items;
+  const f=i=>i.fields;
+  const total=items.length,done=items.filter(i=>f(i)['System.State']==='Done').length;
+  const blocked=items.filter(i=>f(i)['System.State']==='Blocked').length;
+  const doing=items.filter(i=>f(i)['System.State']==='Doing').length;
+  const pct=total>0?Math.round(done/total*100):0;
+  const conFecha=items.filter(i=>f(i)['Microsoft.VSTS.Scheduling.DueDate']);
+  const atrasados=conFecha.filter(i=>{const d=diasAtraso(f(i)['Microsoft.VSTS.Scheduling.DueDate'],f(i)['System.State']);return d&&d>0}).length;
+  const sinArea=items.filter(i=>!f(i)['Custom.Departamento']).length;
+  const sinFecha=items.filter(i=>!f(i)['Microsoft.VSTS.Scheduling.DueDate']).length;
+  const alertas=[];
+  if(sinArea>0)alertas.push(`${sinArea} sin área cliente`);
+  if(sinFecha>0)alertas.push(`${sinFecha} sin due date`);
+  const alertEl=document.getElementById('alert-campos');
+  if(alertas.length){document.getElementById('alert-txt').textContent=alertas.join(' · ');alertEl.style.display='block'}
+  else alertEl.style.display='none';
+  const sem=document.getElementById('semaforo');sem.className='semaforo';
+  let color,label,sub;
+  if(blocked>0){color='rojo';label='En riesgo';sub=`${blocked} item${blocked>1?'s':''} bloqueado${blocked>1?'s':''}. Revisar antes del daily.`}
+  else if(atrasados>0){color='amarillo';label='Con alertas';sub=`${atrasados} item${atrasados>1?'s':''} con due date vencida. Hablar con los responsables hoy.`}
+  else if(pct>=70){color='verde';label='Va bien';sub=`${pct}% completado. El equipo va al ritmo esperado.`}
+  else if(pct>=30){color='amarillo';label='En progreso';sub=`${pct}% completado. Monitorear que no se acumule al cierre.`}
+  else{color='gris';label='Iniciando';sub=`${pct}% completado. Sprint recién comenzado o sin datos aún.`}
+  sem.classList.add(color);
+  document.getElementById('sem-label').textContent=label;
+  document.getElementById('sem-sub').textContent=sub;
+  document.getElementById('sem-done').textContent=done;
+  document.getElementById('sem-total').textContent=total;
+  document.getElementById('sem-pct').textContent=pct+'%';
+  document.getElementById('prog-pct').textContent=pct+'%';
+  const fill=document.getElementById('prog-fill');
+  fill.style.width=pct+'%';
+  fill.style.background=color==='verde'?'#639922':color==='amarillo'?'#BA7517':color==='rojo'?'#E24B4A':'#888780';
+  document.getElementById('prog-mid').textContent=`${done} de ${total} items`;
+  document.getElementById('m-atrasados').textContent=atrasados;
+  document.getElementById('m-atrasados-sub').textContent=conFecha.length?`de ${conFecha.length} con due date`:'sin due dates cargadas';
+  document.getElementById('m-blocked').textContent=blocked;
+  document.getElementById('m-doing').textContent=doing;
+  const personas=new Set(items.filter(i=>f(i)['System.State']==='Doing').map(i=>{const a=f(i)['System.AssignedTo'];return a?(a.displayName||a):'?'})).size;
+  document.getElementById('m-doing-sub').textContent=`${personas} persona${personas!==1?'s':''} activa${personas!==1?'s':''}`;
+  document.getElementById('db-meta').textContent=`${_cfg.ORG} · ${_proyecto} · ${_teamName} · ${_sprintLabel||'Todos'} · Actualizado ${new Date().toLocaleTimeString('es-EC',{hour:'2-digit',minute:'2-digit'})}`;
+  renderTabla(_allItems);
+}
+
+function renderTabla(items){
+  const sorted=[...items].sort((a,b)=>urgencia(a)-urgencia(b));
+  const tbody=document.getElementById('tabla-body');
+  if(!sorted.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:2rem;color:#aaa">Sin items con este filtro</td></tr>';return}
+  tbody.innerHTML=sorted.map(item=>{
+    const f=item.fields,s=f['System.State'];
+    const a=f['System.AssignedTo'],name=a?(a.displayName||a):'Sin asignar';
+    const short=name.split(' ').slice(0,2).join(' ');
+    const area=f['Custom.Departamento']||'';
+    const due=f['Microsoft.VSTS.Scheduling.DueDate'],dias=diasAtraso(due,s);
+    return`<tr>
+      <td class="td-title" title="${f['System.Title']}">${f['System.Title']}</td>
+      <td><span class="avatar-sm">${initials(name)}</span>${short}</td>
+      <td>${pillState(s)}</td>
+      <td>${area?`<span class="area-tag">${area}</span>`:'<span style="color:#ccc">—</span>'}</td>
+      <td>${renderDue(due,dias)}</td>
+      <td>${renderAtraso(dias,due)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filtrar(tipo,btn){
+  _filtroActual=tipo;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const map={
+    'todos':_allItems,
+    'atrasados':_allItems.filter(i=>{const d=diasAtraso(i.fields['Microsoft.VSTS.Scheduling.DueDate'],i.fields['System.State']);return d&&d>0}),
+    'bloqueados':_allItems.filter(i=>i.fields['System.State']==='Blocked'),
+    'doing':_allItems.filter(i=>i.fields['System.State']==='Doing'),
+    'done':_allItems.filter(i=>i.fields['System.State']==='Done')
+  };
+  renderTabla(map[tipo]||_allItems);
+}
+
+async function recargar(){
+  document.getElementById('db-meta').textContent='Actualizando...';
+  try{const ids=await wiqlQuery();const items=ids.length?await fetchItems(ids):[];renderDashboard(items);filtrar(_filtroActual,document.querySelector('.filter-btn.active'))}
+  catch(e){document.getElementById('db-meta').textContent='Error: '+e.message}
+}
+
+(async()=>{
+  const splashSub=document.getElementById('splash-sub');
+  try{
+    splashSub.textContent='Leyendo config.txt...';
+    _cfg=await parsearConfig();
+    const proyectos=_cfg.PROYECTOS.split(',').map(p=>p.trim()).filter(Boolean);
+    const mem=loadMemory();
+    if(mem.proyecto&&proyectos.includes(mem.proyecto)&&mem.team){
+      _proyecto=mem.proyecto;_teamName=mem.team;_sprintPath=mem.sprint;_sprintLabel=mem.sprintLabel;
+      splashSub.textContent=`Cargando ${mem.proyecto} · ${mem.team}...`;
+      await cargarYRenderizar();
+    }else{
+      document.getElementById('splash').style.display='none';
+      abrirModal();
+      document.getElementById('btn-cancelar').style.display='none';
+    }
+  }catch(e){
+    splashSub.textContent='⚠ '+e.message;
+    document.querySelector('.spinner').style.display='none';
+  }
+})();
+</script>
+</body>
+</html>
