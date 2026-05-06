@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Sprint · Banco Guayaquil</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; background: #F0F2F5; color: #0B1D3A; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+  #root { min-height: 100vh; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #C8CEDA; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ── TWEAK DEFAULTS ───────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "mockMode": true,
+  "compactTable": false,
+  "showTeamGrid": true
+}/*EDITMODE-END*/;
+
+// ── PALETTE ──────────────────────────────────────────────────────────────────
+const C = {
+  navy:        "#0B1D3A",
+  navyDeep:    "#060F1F",
+  navyMid:     "#162B52",
+  navyLight:   "#E8EDF5",
+  magenta:     "#C4186A",
+  magentaDark: "#A01257",
+  magentaLight:"#FAEBF2",
+  white:       "#FFFFFF",
+  bg:          "#F0F2F5",
+  card:        "#FFFFFF",
+  border:      "#DDE1EB",
+  borderLight: "#EEF0F5",
+  text:        "#0B1D3A",
+  muted:       "#6B7A99",
+  faint:       "#B0BAD0",
+  // status
+  red:         "#D63B3B", redBg: "#FDF0F0", redText: "#8B1A1A",
+  amber:       "#C47B0E", amberBg:"#FDF5E6", amberText:"#7A4B00",
+  green:       "#1B8C55", greenBg:"#EAF5EF", greenText:"#0D5232",
+};
+
+const GRAD_MAIN   = `linear-gradient(125deg, ${C.navyDeep} 0%, ${C.navyMid} 55%, ${C.magentaDark} 100%)`;
+const GRAD_STATUS = {
+  risk:     `linear-gradient(125deg, ${C.navyDeep} 0%, #6B0A2C 100%)`,
+  alert:    `linear-gradient(125deg, ${C.navyDeep} 0%, #7A4200 100%)`,
+  good:     `linear-gradient(125deg, ${C.navyDeep} 0%, #0D5232 100%)`,
+  neutral:  `linear-gradient(125deg, ${C.navyDeep} 0%, ${C.navyMid} 100%)`,
+};
+
+// ── MOCK DATA ─────────────────────────────────────────────────────────────────
+const MOCK_SPRINT_INFO = { proyecto:"TribuDatayAnalitica", equipo:"LinkUp", sprint:"Sprint 24", inicio:"2026-04-07", fin:"2026-04-25" };
+
+const MOCK_ITEMS = [
+  { id:1001, title:"Integración API de pagos",           state:"Done",             assignedTo:"Ana Torres",     sp:8,  area:"Pagos",          tipo:"Change" },
+  { id:1002, title:"Migración base de datos clientes",   state:"Done",             assignedTo:"Carlos Ruiz",    sp:5,  area:"Core Banking",    tipo:"BAU" },
+  { id:1003, title:"Dashboard de reportes gerenciales",  state:"Done",             assignedTo:"Ana Torres",     sp:13, area:"Reporting",       tipo:"Change" },
+  { id:1004, title:"Autenticación biométrica móvil",     state:"Done",             assignedTo:"Luis Vera",      sp:8,  area:"Seguridad",       tipo:"Change" },
+  { id:1005, title:"Módulo de notificaciones push",      state:"Done",             assignedTo:"María Silva",    sp:5,  area:"Canales",         tipo:"Change" },
+  { id:1006, title:"Refactoring servicio de caché",      state:"Done",             assignedTo:"Pedro Mora",     sp:3,  area:"Backend",         tipo:"BAU" },
+  { id:1007, title:"Tests de regresión API pagos",       state:"Done",             assignedTo:"Carlos Ruiz",    sp:3,  area:"QA",              tipo:"BAU" },
+  { id:1008, title:"Validación formularios web",         state:"Done",             assignedTo:"María Silva",    sp:2,  area:"Frontend",        tipo:"BAU" },
+  { id:1009, title:"Pipeline de datos analíticos",       state:"Doing",            assignedTo:"Ana Torres",     sp:13, area:"Data",            tipo:"Change" },
+  { id:1010, title:"Optimización de queries críticas",   state:"Doing",            assignedTo:"Pedro Mora",     sp:8,  area:"Backend",         tipo:"BAU" },
+  { id:1011, title:"Módulo de scoring crediticio",       state:"Doing",            assignedTo:"Luis Vera",      sp:8,  area:"Riesgo",          tipo:"Change" },
+  { id:1012, title:"Integración con Salesforce CRM",     state:"Doing",            assignedTo:"Roberto Castro", sp:5,  area:"CRM",             tipo:"Change" },
+  { id:1013, title:"Fix: conciliación de transacciones", state:"Doing",            assignedTo:"Sofía León",     sp:3,  area:"Pagos",           tipo:"BAU" },
+  { id:1014, title:"Onboarding digital v2.0",            state:"Revisión Calidad", assignedTo:"Roberto Castro", sp:8,  area:"Digital",         tipo:"Change" },
+  { id:1015, title:"Reporte regulatorio SBS Q1",         state:"Revisión Calidad", assignedTo:"Sofía León",     sp:5,  area:"Regulatorio",     tipo:"BAU" },
+  { id:1016, title:"API gateway v3 — upgrade",           state:"Revisión Calidad", assignedTo:"Luis Vera",      sp:5,  area:"Infraestructura", tipo:"Change" },
+  { id:1017, title:"Encriptación de datos sensibles",    state:"Blocked",          assignedTo:"Ana Torres",     sp:8,  area:"Seguridad",       tipo:"BAU" },
+  { id:1018, title:"Conector Kafka → Data Lake",         state:"Blocked",          assignedTo:"Pedro Mora",     sp:5,  area:"Data",            tipo:"Change" },
+  { id:1019, title:"Actualización SDK móvil iOS",        state:"Backlog",          assignedTo:"Roberto Castro", sp:3,  area:"Mobile",          tipo:"Change" },
+  { id:1020, title:"Documentación OpenAPI v3",           state:"Backlog",          assignedTo:"Sofía León",     sp:2,  area:"Dev Tools",       tipo:"BAU" },
+];
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function initials(n) {
+  if (!n) return "?";
+  const p = n.split(" ").filter(Boolean);
+  return p.length >= 2 ? (p[0][0] + p[p.length-1][0]).toUpperCase() : n.substring(0,2).toUpperCase();
+}
+function diasAtraso(due, state) {
+  if (!due || state === "Done") return null;
+  return Math.floor((new Date("2026-04-24").setHours(0,0,0,0) - new Date(due)) / 86400000);
+}
+function formatDate(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString("es-EC", { day:"2-digit", month:"short" });
+}
+function sprintDayProgress(inicio, fin) {
+  const s = new Date(inicio), e = new Date(fin), n = new Date("2026-04-24");
+  const total = (e - s) / 86400000;
+  const elapsed = Math.min(Math.max((n - s) / 86400000, 0), total);
+  return Math.round(elapsed / total * 100);
+}
+function computeStats(items) {
+  const committed = items.filter(i => i.state !== "Backlog");
+  const done      = items.filter(i => i.state === "Done");
+  const blocked   = items.filter(i => i.state === "Blocked");
+  const doing     = items.filter(i => i.state === "Doing");
+  const review    = items.filter(i => i.state === "Revisión Calidad");
+  const backlog   = items.filter(i => i.state === "Backlog");
+  const sum       = arr => arr.reduce((s,i) => s+i.sp, 0);
+  const spTotal   = sum(committed);
+  const spDone    = sum(done);
+  const spDoing   = sum(doing);
+  const spReview  = sum(review);
+  const spBlocked = sum(blocked);
+  const spBacklog = sum(backlog);
+  const pctItems  = committed.length ? Math.round(done.length/committed.length*100) : 0;
+  const pctSP     = spTotal ? Math.round(spDone/spTotal*100) : 0;
+  const atrasados = committed.filter(i => { const d = diasAtraso(i.due,i.state); return d && d > 0; });
+  return { committed, done, blocked, doing, review, backlog, spTotal, spDone, spDoing, spReview, spBlocked, spBacklog, pctItems, pctSP, atrasados };
+}
+function computeTeam(items) {
+  const m = {};
+  items.forEach(item => {
+    const n = item.assignedTo;
+    if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0 };
+    m[n].items.push(item);
+    m[n].spTotal += item.sp;
+    if (item.state === "Done") m[n].spDone += item.sp;
+  });
+  return Object.values(m).sort((a,b) => b.spTotal - a.spTotal);
+}
+function urgencyScore(item) {
+  const d = diasAtraso(item.due, item.state);
+  if (item.state === "Blocked") return 0;
+  if (d && d > 3) return 1;
+  if (d && d > 0) return 2;
+  if (item.state === "Doing") return 3;
+  if (item.state === "Revisión Calidad") return 4;
+  if (item.state === "Backlog") return 5;
+  if (item.state === "Done") return 99;
+  return 6;
+}
+
+// ── ICON ──────────────────────────────────────────────────────────────────────
+function Icon({ name, size=16, color="currentColor", strokeWidth=1.75 }) {
+  const d = {
+    check:    "M4 13l5 5L20 7",
+    alert:    "M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
+    clock:    "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-6v-4m0-4h.01",
+    users:    "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2m22 0v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
+    layers:   "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+    refresh:  "M23 4v6h-6M1 20v-6h6m15.364-4A9 9 0 006.22 5.22M2.636 14A9 9 0 0017.78 18.78",
+    chevron:  "M9 18l6-6-6-6",
+    lock:     "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
+    trending: "M23 6l-9.5 9.5-5-5L1 18",
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
+      <path d={d[name] || ""}></path>
+    </svg>
+  );
+}
+
+// ── HEADER ────────────────────────────────────────────────────────────────────
+function Header({ info, onRefresh, onChangeProject, mockMode }) {
+  return (
+    <div style={{ background:C.navy, color:"#fff", padding:"0 28px", display:"flex", alignItems:"center", justifyContent:"space-between", height:52, gap:16 }}>
+      {/* Logo */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+        <div style={{ width:26, height:26, borderRadius:6, background:GRAD_MAIN, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <Icon name="trending" size={13} color="#fff" strokeWidth={2.5} />
+        </div>
+        <span style={{ fontWeight:800, fontSize:12, letterSpacing:"0.07em", textTransform:"uppercase", color:"#fff", lineHeight:1 }}>Banco Guayaquil</span>
+        <div style={{ width:1, height:16, background:"rgba(255,255,255,0.15)" }}></div>
+        <span style={{ fontWeight:600, fontSize:13, color:"rgba(255,255,255,0.7)" }}>Dashboard Sprint</span>
+        {mockMode && <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:4, background:"rgba(196,24,106,0.3)", color:"#F5A0C0", letterSpacing:"0.04em" }}>DEMO</span>}
+      </div>
+
+      {/* Breadcrumb context selector */}
+      <button onClick={onChangeProject} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", fontFamily:"inherit", transition:"background 0.15s" }}
+        onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
+        onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
+        <span style={{ fontSize:12, color:"rgba(255,255,255,0.5)" }}>{info.proyecto}</span>
+        <span style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>›</span>
+        <span style={{ fontSize:12, color:"rgba(255,255,255,0.75)", fontWeight:600 }}>{info.equipo}</span>
+        <span style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>›</span>
+        <span style={{ fontSize:12, color:"#fff", fontWeight:700 }}>{info.sprint || "Todos los sprints"}</span>
+        <Icon name="chevron" size={12} color="rgba(255,255,255,0.4)" strokeWidth={2} />
+      </button>
+
+      {/* Refresh icon only */}
+      <button onClick={onRefresh} title="Actualizar" style={{ display:"flex", alignItems:"center", justifyContent:"center", width:32, height:32, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", flexShrink:0, transition:"background 0.15s" }}
+        onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
+        onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
+        <Icon name="refresh" size={14} color="rgba(255,255,255,0.7)" />
+      </button>
+    </div>
+  );
+}
+function HeaderBadge({ children, accent, warn }) {
+  const bg = warn ? "rgba(196,24,106,0.25)" : accent ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)";
+  const color = warn ? "#F5A0C0" : "rgba(255,255,255,0.75)";
+  return (
+    <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:4, background:bg, color, letterSpacing:"0.02em" }}>{children}</span>
+  );
+}
+
+// ── STATUS HERO ───────────────────────────────────────────────────────────────
+function StatusHero({ stats, dayPct, info }) {
+  const { blocked, atrasados, pctSP, pctItems, done, committed, spDone, spTotal } = stats;
+  let grad, statusLabel, statusSub, statusTag;
+  if (blocked.length > 0) {
+    grad = GRAD_STATUS.risk; statusLabel = "Sprint en riesgo"; statusTag = "CRÍTICO";
+    statusSub = `${blocked.length} item${blocked.length>1?"s":""} bloqueado${blocked.length>1?"s":""}. Se requiere acción inmediata para desbloquear.`;
+  } else if (atrasados.length > 0) {
+    grad = GRAD_STATUS.alert; statusLabel = "Sprint con alertas"; statusTag = "ATENCIÓN";
+    statusSub = `${atrasados.length} item${atrasados.length>1?"s":""} con due date vencida. Revisar con responsables hoy.`;
+  } else if (pctSP >= 70) {
+    grad = GRAD_STATUS.good; statusLabel = "Sprint en buen ritmo"; statusTag = "EN CURSO";
+    statusSub = `${pctSP}% del esfuerzo comprometido fue entregado. El equipo va al ritmo esperado.`;
+  } else {
+    grad = GRAD_STATUS.neutral; statusLabel = "Sprint en progreso"; statusTag = "EN CURSO";
+    statusSub = `${pctSP}% del esfuerzo entregado. Monitorear que no se acumule al cierre del sprint.`;
+  }
+
+  const daysLeft = Math.max(0, Math.round((new Date(info.fin) - new Date("2026-04-24")) / 86400000));
+
+  return (
+    <div style={{ background:grad, borderRadius:10, padding:"28px 32px", display:"flex", alignItems:"center", gap:32, flexWrap:"wrap", position:"relative", overflow:"hidden" }}>
+      {/* decorative circle */}
+      <div style={{ position:"absolute", right:-60, top:-60, width:240, height:240, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }}></div>
+      <div style={{ position:"absolute", right:60, bottom:-80, width:180, height:180, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }}></div>
+
+      <div style={{ flex:1, minWidth:240 }}>
+        <div style={{ display:"inline-block", fontSize:10, fontWeight:700, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:3, background:"rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.9)", marginBottom:10 }}>{statusTag}</div>
+        <div style={{ fontSize:26, fontWeight:800, color:"#fff", lineHeight:1.1, marginBottom:8 }}>{statusLabel}</div>
+        <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", lineHeight:1.5, maxWidth:420 }}>{statusSub}</div>
+      </div>
+
+      <div style={{ display:"flex", gap:0, flexWrap:"wrap" }}>
+        {[
+          { label:"Tiempo transcurrido", value:`${dayPct}%`, sub:`${daysLeft}d restante${daysLeft!==1?"s":""}` },
+          { label:"Tareas entregadas",   value:`${done.length}/${committed.length}`, sub:`${pctItems}% del compromiso` },
+          { label:"Esfuerzo entregado",  value:`${spDone}/${spTotal} SP`, sub:`${pctSP}% de los SP` },
+        ].map((s,i) => (
+          <div key={i} style={{ padding:"0 28px", borderLeft:"1px solid rgba(255,255,255,0.12)", textAlign:"center" }}>
+            <div style={{ fontSize:10, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", color:"rgba(255,255,255,0.5)", marginBottom:6 }}>{s.label}</div>
+            <div style={{ fontSize:22, fontWeight:800, color:"#fff", lineHeight:1 }}>{s.value}</div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", marginTop:4 }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── KPI CARD ──────────────────────────────────────────────────────────────────
+function KpiCard({ label, value, valueColor, sub, subColor, icon, iconColor, children }) {
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"20px 22px" }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:14 }}>
+        <span style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted }}>{label}</span>
+        {icon && <Icon name={icon} size={15} color={iconColor || C.faint} />}
+      </div>
+      <div style={{ fontSize:32, fontWeight:800, color:valueColor || C.navy, lineHeight:1, marginBottom:6 }}>{value}</div>
+      {sub && <div style={{ fontSize:12, color:subColor || C.muted }}>{sub}</div>}
+      {children}
+    </div>
+  );
+}
+
+// ── CONTEXT MODAL ─────────────────────────────────────────────────────────────
+function ContextModal({ cfg, onApply, onClose, canClose, initialProyecto, initialTeam }) {
+  const [proyecto, setProyecto] = useState(initialProyecto || "");
+  const [equipo, setEquipo] = useState(initialTeam || "");
+  const [sprints, setSprints] = useState([]);
+  const [sprintPath, setSprintPath] = useState("");
+  const [sprintLabel, setSprintLabel] = useState("Todos");
+  const [loadingSprints, setLoadingSprints] = useState(false);
+  const [err, setErr] = useState("");
+
+  const proyectos = cfg?.PROYECTOS ? cfg.PROYECTOS.split(",").map(p=>p.trim()).filter(Boolean) : [];
+  function getEquipos(p) { return cfg?.[`EQUIPOS_${p}`] ? cfg[`EQUIPOS_${p}`].split(",").map(e=>e.trim()).filter(Boolean) : []; }
+
+  async function loadSprints(p, eq) {
+    if (!p || !eq || !cfg?.PAT) return;
+    setLoadingSprints(true); setErr(""); setSprints([]);
+    try {
+      const r = await fetch(`https://dev.azure.com/${cfg.ORG}/${encodeURIComponent(p)}/${encodeURIComponent(eq)}/_apis/work/teamsettings/iterations?api-version=7.1`, { headers:{ "Authorization":"Basic "+btoa(":"+cfg.PAT), "Content-Type":"application/json" } });
+      if (!r.ok) throw new Error(`Error ${r.status} cargando sprints`);
+      const data = await r.json();
+      const list = (data.value||[]).reverse();
+      setSprints(list);
+      const active = list.find(s => s.attributes?.timeFrame === "current");
+      if (active) { setSprintPath(active.path); setSprintLabel(active.name); }
+    } catch(e) { setErr(e.message); }
+    finally { setLoadingSprints(false); }
+  }
+
+  useEffect(() => { if (proyecto && equipo) loadSprints(proyecto, equipo); }, []);
+
+  const equipos = getEquipos(proyecto);
+
+  const inputStyle = { width:"100%", padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:7, fontSize:13, fontFamily:"inherit", color:C.navy, background:"#FAFBFD", outline:"none" };
+  const labelStyle = { fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:"0.06em", display:"block", marginBottom:5 };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(6,15,31,0.55)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:"2rem" }}>
+      <div style={{ background:"#fff", borderRadius:12, padding:"28px 28px 24px", width:"100%", maxWidth:420, boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
+        <div style={{ fontWeight:800, fontSize:16, color:C.navy, marginBottom:4 }}>Seleccionar contexto</div>
+        <div style={{ fontSize:13, color:C.muted, marginBottom:20 }}>Proyecto → Equipo → Sprint</div>
+
+        <div style={{ marginBottom:14 }}>
+          <label style={labelStyle}>Proyecto</label>
+          <select value={proyecto} onChange={e=>{ setProyecto(e.target.value); setEquipo(""); setSprints([]); }} style={inputStyle}>
+            <option value="">— Selecciona —</option>
+            {proyectos.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        {proyecto && (
+          <div style={{ marginBottom:14 }}>
+            <label style={labelStyle}>Equipo</label>
+            <select value={equipo} onChange={e=>{ setEquipo(e.target.value); loadSprints(proyecto, e.target.value); }} style={inputStyle}>
+              <option value="">— Selecciona —</option>
+              {equipos.map(eq => <option key={eq} value={eq}>{eq}</option>)}
+            </select>
+          </div>
+        )}
+
+        {(sprints.length > 0 || loadingSprints) && (
+          <div style={{ marginBottom:14 }}>
+            <label style={labelStyle}>Sprint</label>
+            {loadingSprints
+              ? <div style={{ fontSize:12, color:C.muted, padding:"8px 0" }}>Cargando sprints...</div>
+              : <select value={sprintPath} onChange={e=>{ setSprintPath(e.target.value); setSprintLabel(e.target.selectedOptions[0]?.dataset?.label||"Todos"); }} style={inputStyle}>
+                  <option value="" data-label="Todos">Todos los sprints</option>
+                  {sprints.map(s => <option key={s.path} value={s.path} data-label={s.name}>{s.name}{s.attributes?.timeFrame==="current"?" ✓":""}</option>)}
+                </select>
+            }
+          </div>
+        )}
+
+        {err && <div style={{ fontSize:12, color:C.red, background:C.redBg, padding:"8px 12px", borderRadius:7, marginBottom:12, border:`1px solid #F7C1C1` }}>{err}</div>}
+
+        <div style={{ display:"flex", gap:8, marginTop:4 }}>
+          {canClose && <button onClick={onClose} style={{ padding:"9px 18px", fontSize:13, fontWeight:600, border:`1px solid ${C.border}`, borderRadius:7, background:"#fff", color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>Cancelar</button>}
+          <button
+            disabled={!proyecto || !equipo}
+            onClick={()=>onApply({ proyecto, equipo, sprintPath, sprintLabel })}
+            style={{ flex:1, padding:"9px 18px", fontSize:13, fontWeight:700, border:"none", borderRadius:7, background:(!proyecto||!equipo)?C.faint:C.navy, color:"#fff", cursor:(!proyecto||!equipo)?"not-allowed":"pointer", fontFamily:"inherit" }}>
+            Ver dashboard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── BAU VS CHANGE CARD ────────────────────────────────────────────────────────
+function BauChangeCard({ items }) {
+  const committed = items.filter(i => i.state !== "Backlog");
+  const bau    = committed.filter(i => i.tipo === "BAU");
+  const change = committed.filter(i => i.tipo === "Change");
+  const spBau    = bau.reduce((s,i) => s+i.sp, 0);
+  const spChange = change.reduce((s,i) => s+i.sp, 0);
+  const total    = committed.length;
+  const spTotal  = spBau + spChange;
+  const pctBauT  = total ? Math.round(bau.length/total*100) : 0;
+  const pctChgT  = total ? Math.round(change.length/total*100) : 0;
+  const pctBauSP = spTotal ? Math.round(spBau/spTotal*100) : 0;
+  const pctChgSP = spTotal ? Math.round(spChange/spTotal*100) : 0;
+
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"20px 24px", display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Composición del sprint</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>BAU vs Change</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+
+      {/* Tareas */}
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+          <span style={{ fontSize:11, color:C.muted, fontWeight:500 }}>Tareas ({total})</span>
+        </div>
+        <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", gap:2 }}>
+          <div title={`BAU: ${bau.length} tareas`} style={{ flex:bau.length||0.001, background:C.navy, borderRadius:"5px 0 0 5px", minWidth:4 }}></div>
+          <div title={`Change: ${change.length} tareas`} style={{ flex:change.length||0.001, background:C.magenta, borderRadius:"0 5px 5px 0", minWidth:4 }}></div>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:8, height:8, borderRadius:2, background:C.navy }}></div>
+            <span style={{ fontSize:12, color:C.muted }}>BAU</span>
+            <span style={{ fontSize:13, fontWeight:700, color:C.navy }}>{bau.length}</span>
+            <span style={{ fontSize:11, color:C.faint }}>({pctBauT}%)</span>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:8, height:8, borderRadius:2, background:C.magenta }}></div>
+            <span style={{ fontSize:12, color:C.muted }}>Change</span>
+            <span style={{ fontSize:13, fontWeight:700, color:C.magenta }}>{change.length}</span>
+            <span style={{ fontSize:11, color:C.faint }}>({pctChgT}%)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* SP */}
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+          <span style={{ fontSize:11, color:C.muted, fontWeight:500 }}>Story Points ({spTotal})</span>
+        </div>
+        <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", gap:2 }}>
+          <div title={`BAU: ${spBau} SP`} style={{ flex:spBau||0.001, background:C.navy, borderRadius:"5px 0 0 5px", minWidth:4 }}></div>
+          <div title={`Change: ${spChange} SP`} style={{ flex:spChange||0.001, background:C.magenta, borderRadius:"0 5px 5px 0", minWidth:4 }}></div>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:8, height:8, borderRadius:2, background:C.navy }}></div>
+            <span style={{ fontSize:12, color:C.muted }}>BAU</span>
+            <span style={{ fontSize:13, fontWeight:700, color:C.navy }}>{spBau} SP</span>
+            <span style={{ fontSize:11, color:C.faint }}>({pctBauSP}%)</span>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:8, height:8, borderRadius:2, background:C.magenta }}></div>
+            <span style={{ fontSize:12, color:C.muted }}>Change</span>
+            <span style={{ fontSize:13, fontWeight:700, color:C.magenta }}>{spChange} SP</span>
+            <span style={{ fontSize:11, color:C.faint }}>({pctChgSP}%)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ESFUERZO CARD ─────────────────────────────────────────────────────────────
+function EsfuerzoCard({ stats }) {
+  const { spDone, spDoing, spReview, spBlocked, spBacklog, spTotal, pctSP } = stats;
+  const segs = [
+    { label:"Entregado",   sp:spDone,    color:C.magenta },
+    { label:"En progreso", sp:spDoing,   color:"#3A6BB5" },
+    { label:"En revisión", sp:spReview,  color:"#7B5EA7" },
+    { label:"Bloqueado",   sp:spBlocked, color:C.red },
+    { label:"Pendiente",   sp:spBacklog, color:C.faint },
+  ].filter(s => s.sp > 0);
+
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:20, height:"100%" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Esfuerzo comprometido</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>Story Points por estado</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+
+      {/* Big fraction */}
+      <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+        <span style={{ fontSize:52, fontWeight:800, color:C.magenta, lineHeight:1 }}>{spDone}</span>
+        <div>
+          <span style={{ fontSize:18, fontWeight:600, color:C.faint }}>/ {spTotal} SP</span>
+          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Story points entregados</div>
+        </div>
+      </div>
+
+      {/* Bar */}
+      <div>
+        <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", gap:2 }}>
+          {segs.map((s,i) => (
+            <div key={i} title={`${s.label}: ${s.sp} SP`} style={{ flex:s.sp, background:s.color, minWidth:4, borderRadius: i===0 ? "5px 0 0 5px" : i===segs.length-1 ? "0 5px 5px 0" : 0 }}></div>
+          ))}
+        </div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:"6px 18px", marginTop:12 }}>
+          {segs.map((s,i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <div style={{ width:8, height:8, borderRadius:2, background:s.color, flexShrink:0 }}></div>
+              <span style={{ fontSize:11, color:C.muted }}>{s.label}</span>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text }}>{s.sp} SP</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+
+    </div>
+  );
+}
+
+// ── TEAM GRID ─────────────────────────────────────────────────────────────────
+const PERSON_COLORS = ["#0B4DB5","#8B1A6B","#1B6E5E","#7B3FB5","#B54A00","#005C80","#6B4A00"];
+function personColor(name, idx) {
+  const map = {
+    "Ana Torres":"#0B4DB5","Carlos Ruiz":"#1B6E5E","Luis Vera":"#7B3FB5",
+    "María Silva":"#B54A00","Pedro Mora":"#8B1A6B","Roberto Castro":"#005C80","Sofía León":"#6B4A00"
+  };
+  return map[name] || PERSON_COLORS[idx % PERSON_COLORS.length];
+}
+
+function Avatar({ name, idx, size=32 }) {
+  const color = personColor(name, idx||0);
+  return (
+    <div style={{ width:size, height:size, borderRadius:"50%", background:`${color}18`, border:`1.5px solid ${color}40`, color, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.33, fontWeight:700, flexShrink:0 }}>
+      {initials(name)}
+    </div>
+  );
+}
+
+function TeamGrid({ items }) {
+  const team = computeTeam(items);
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:16, height:"100%" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Equipo</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>Carga por persona</div>
+        </div>
+        <Icon name="users" size={16} color={C.faint} />
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap:6, overflowY:"auto", maxHeight:198, paddingRight:2 }}>
+        {team.map((member, idx) => {
+          const color = personColor(member.name, idx);
+          const pct = member.spTotal ? Math.round(member.spDone/member.spTotal*100) : 0;
+          const isBlocked = member.items.some(i => i.state === "Blocked");
+          const firstName = member.name.split(" ")[0];
+          return (
+            <div key={member.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, background:C.bg, minWidth:0 }}>
+              <Avatar name={member.name} idx={idx} size={30} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5, flexWrap:"nowrap", overflow:"hidden" }}>
+                  <span style={{ fontWeight:600, fontSize:12, color:C.navy, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{firstName}</span>
+                  {isBlocked && <span style={{ fontSize:9, fontWeight:700, padding:"1px 5px", borderRadius:3, background:C.redBg, color:C.red, flexShrink:0 }}>BLOQ</span>}
+                  <span style={{ fontSize:11, fontWeight:700, color, marginLeft:"auto", flexShrink:0, whiteSpace:"nowrap" }}>
+                    {member.spDone}<span style={{ color:C.faint, fontWeight:500 }}>/{member.spTotal}</span>
+                    <span style={{ fontSize:10, color:C.muted, fontWeight:400, marginLeft:2 }}>SP</span>
+                  </span>
+                </div>
+                <div style={{ height:4, borderRadius:2, background:C.borderLight, overflow:"hidden" }}>
+                  <div style={{ width:`${pct}%`, height:"100%", background:color, borderRadius:2, transition:"width 0.5s ease" }}></div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── PILL ─────────────────────────────────────────────────────────────────────
+const STATE_STYLE = {
+  "Done":             { bg:"#EBF5F0", color:"#0D5232",  label:"Done" },
+  "Doing":            { bg:"#EBF0FA", color:"#0B3F8A",  label:"Doing" },
+  "Blocked":          { bg:C.redBg,   color:C.red,      label:"Bloqueado" },
+  "Revisión Calidad": { bg:"#F0EDF9", color:"#5A3A99",  label:"En revisión" },
+  "Backlog":          { bg:"#F2F3F5", color:C.muted,    label:"Backlog" },
+};
+function Pill({ state }) {
+  const s = STATE_STYLE[state] || STATE_STYLE["Backlog"];
+  return (
+    <span style={{ display:"inline-block", fontSize:11, fontWeight:600, padding:"3px 8px", borderRadius:4, background:s.bg, color:s.color, whiteSpace:"nowrap" }}>{s.label}</span>
+  );
+}
+
+// ── ITEMS TABLE ───────────────────────────────────────────────────────────────
+function ItemsTable({ items, compact }) {
+  const [filter, setFilter] = useState("todos");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
+  const rowH = compact ? 36 : 46;
+  const tabs = [
+    { id:"todos",      label:"Todos",       count:items.filter(i=>i.state!=="Backlog").length },
+    { id:"bloqueados", label:"Bloqueados",  count:items.filter(i=>i.state==="Blocked").length },
+    { id:"doing",      label:"En progreso", count:items.filter(i=>i.state==="Doing").length },
+    { id:"revision",   label:"En revisión", count:items.filter(i=>i.state==="Revisión Calidad").length },
+    { id:"done",       label:"Done",        count:items.filter(i=>i.state==="Done").length },
+  ];
+  const visible = useMemo(() => {
+    let list = [...items];
+    if (filter==="bloqueados") list = list.filter(i=>i.state==="Blocked");
+    else if (filter==="doing") list = list.filter(i=>i.state==="Doing");
+    else if (filter==="revision") list = list.filter(i=>i.state==="Revisión Calidad");
+    else if (filter==="done") list = list.filter(i=>i.state==="Done");
+    else list = list.filter(i=>i.state!=="Backlog");
+    return list.sort((a,b)=>urgencyScore(a)-urgencyScore(b));
+  }, [items, filter]);
+
+  const totalPages = Math.ceil(visible.length / PAGE_SIZE);
+  const paginated = visible.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+
+  // reset page on filter change
+  useEffect(() => setPage(1), [filter]);
+
+  const btnPage = (active) => ({
+    width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center",
+    borderRadius:6, border:`1px solid ${active ? C.navy : C.border}`,
+    background: active ? C.navy : "#fff", color: active ? "#fff" : C.muted,
+    fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
+  });
+
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, overflow:"hidden" }}>
+      <div style={{ padding:"14px 20px 0", borderBottom:`1px solid ${C.border}` }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+          <div style={{ fontWeight:700, fontSize:14, color:C.navy }}>Items del sprint</div>
+          <div style={{ display:"flex", gap:4 }}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={()=>setFilter(t.id)} style={{
+                fontSize:11, fontWeight:600, padding:"5px 11px", borderRadius:5,
+                border:"1px solid",
+                borderColor: filter===t.id ? C.navy : C.border,
+                background:  filter===t.id ? C.navy : "transparent",
+                color:       filter===t.id ? "#fff" : C.muted,
+                cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
+              }}>
+                {t.label}{t.count>0 ? <span style={{ marginLeft:4, opacity:0.65 }}>{t.count}</span> : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead>
+            <tr>
+              {["Título","Responsable","Estado","Área","SP"].map((h,i) => (
+                <th key={i} style={{ fontSize:10, fontWeight:600, color:C.muted, textAlign:"left", padding:"8px 16px", background:"#FAFBFD", borderBottom:`1px solid ${C.border}`, textTransform:"uppercase", letterSpacing:"0.06em", whiteSpace:"nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {paginated.length===0 && (
+              <tr><td colSpan={6} style={{ textAlign:"center", padding:"2.5rem", color:C.faint, fontSize:13 }}>Sin items en esta categoría</td></tr>
+            )}
+            {paginated.map((item, idx) => {
+              const isBlocked = item.state === "Blocked";
+              return (
+                <tr key={item.id} style={{ borderBottom:`1px solid ${C.borderLight}` }}>
+                  <td style={{ padding:`0 16px`, height:rowH, maxWidth:300 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      {isBlocked && <div style={{ width:3, height:20, borderRadius:2, background:C.red, flexShrink:0 }}></div>}
+                      <div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", fontWeight:500, fontSize:13, color:C.navy }}>{item.title}</div>
+                    </div>
+                  </td>
+                  <td style={{ padding:"0 16px", height:rowH }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                      <Avatar name={item.assignedTo} idx={idx} size={22} />
+                      <span style={{ fontSize:12, color:C.muted }}>{item.assignedTo.split(" ")[0]}</span>
+                    </div>
+                  </td>
+                  <td style={{ padding:"0 16px", height:rowH }}><Pill state={item.state} /></td>
+                  <td style={{ padding:"0 16px", height:rowH }}>
+                    {item.area
+                      ? <span style={{ fontSize:11, padding:"2px 8px", borderRadius:4, background:C.bg, color:C.muted, border:`1px solid ${C.border}` }}>{item.area}</span>
+                      : <span style={{ color:C.faint }}>—</span>}
+                  </td>
+                  <td style={{ padding:"0 16px", height:rowH }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:item.state==="Done"?C.green:C.navy }}>{item.sp}</span>
+                    <span style={{ fontSize:11, color:C.faint, marginLeft:3 }}>SP</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 20px", borderTop:`1px solid ${C.borderLight}` }}>
+          <span style={{ fontSize:12, color:C.muted }}>
+            {(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE, visible.length)} de {visible.length} items
+          </span>
+          <div style={{ display:"flex", gap:4 }}>
+            <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} style={{ ...btnPage(false), opacity:page===1?0.4:1 }}>‹</button>
+            {Array.from({length:totalPages},(_,i)=>i+1).map(p => (
+              <button key={p} onClick={()=>setPage(p)} style={btnPage(p===page)}>{p}</button>
+            ))}
+            <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} style={{ ...btnPage(false), opacity:page===totalPages?0.4:1 }}>›</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TweaksPanel({ tweaks, setTweaks, onClose }) {
+  function Toggle({ val, onChange }) {
+    return (
+      <div onClick={()=>onChange(!val)} style={{ width:38, height:22, borderRadius:11, background:val?C.magenta:C.border, cursor:"pointer", position:"relative", transition:"background 0.2s", flexShrink:0 }}>
+        <div style={{ position:"absolute", top:3, left:val?17:3, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.2)" }}></div>
+      </div>
+    );
+  }
+  function set(key, val) {
+    setTweaks(t => ({...t, [key]:val}));
+    window.parent.postMessage({type:"__edit_mode_set_keys", edits:{[key]:val}}, "*");
+  }
+  const rowStyle = { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 };
+  const labelStyle = { fontSize:13, color:C.text };
+  return (
+    <div style={{ position:"fixed", bottom:24, right:24, background:"#fff", border:`1px solid ${C.border}`, borderRadius:10, padding:"18px 20px 14px", width:240, boxShadow:"0 8px 32px rgba(0,0,0,0.12)", zIndex:9999 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <span style={{ fontWeight:700, fontSize:13, color:C.navy }}>Tweaks</span>
+        <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:20, lineHeight:1, padding:0 }}>×</button>
+      </div>
+      <div style={rowStyle}><span style={labelStyle}>Datos demo</span><Toggle val={tweaks.mockMode} onChange={v=>set("mockMode",v)} /></div>
+      <div style={rowStyle}><span style={labelStyle}>Vista de equipo</span><Toggle val={tweaks.showTeamGrid} onChange={v=>set("showTeamGrid",v)} /></div>
+      <div style={rowStyle}><span style={labelStyle}>Tabla compacta</span><Toggle val={tweaks.compactTable} onChange={v=>set("compactTable",v)} /></div>
+      <div style={{ fontSize:11, color:C.faint, borderTop:`1px solid ${C.borderLight}`, paddingTop:10, marginTop:2, textAlign:"center" }}>
+        {tweaks.mockMode ? "Modo demostración activo" : "Conectado a Azure DevOps"}
+      </div>
+    </div>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
+  const [showTweaks, setShowTweaks] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [cfg, setCfg] = useState(null);
+  const [context, setContext] = useState({ proyecto: MOCK_SPRINT_INFO.proyecto, equipo: MOCK_SPRINT_INFO.equipo, sprintPath:"", sprintLabel: MOCK_SPRINT_INFO.sprint });
+
+  useEffect(() => {
+    const handler = e => {
+      if (e.data?.type === "__activate_edit_mode") setShowTweaks(true);
+      if (e.data?.type === "__deactivate_edit_mode") setShowTweaks(false);
+    };
+    window.addEventListener("message", handler);
+    window.parent.postMessage({ type:"__edit_mode_available" }, "*");
+    // Try loading config.txt for real mode
+    fetch("config.txt").then(r=>r.ok?r.text():null).then(txt=>{
+      if (!txt) return;
+      const c = {};
+      txt.split("\n").forEach(line=>{ line=line.trim(); if(!line||line.startsWith("#")) return; const idx=line.indexOf("="); if(idx<0) return; c[line.substring(0,idx).trim()]=line.substring(idx+1).trim(); });
+      if (c.PAT && c.PAT !== "pega_tu_pat_aqui") setCfg(c);
+    }).catch(()=>{});
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
+  const items = tweaks.mockMode ? MOCK_ITEMS : [];
+  const info  = { ...MOCK_SPRINT_INFO, ...context };
+  const stats = useMemo(() => computeStats(items), [items]);
+  const dayPct = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
+
+  function handleApply(ctx) {
+    setContext(ctx);
+    setShowModal(false);
+  }
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg }}>
+      <Header info={info} onRefresh={()=>{}} onChangeProject={()=>setShowModal(true)} mockMode={tweaks.mockMode} />
+
+      <div style={{ maxWidth:1280, margin:"0 auto", padding:"28px 36px 40px", display:"flex", flexDirection:"column", gap:18 }}>
+
+        {/* KPI row */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
+          <KpiCard label="Tiempo del sprint" value={`${dayPct}%`} valueColor={C.navy} sub={`${Math.max(0,Math.round((new Date(info.fin)-new Date("2026-04-24"))/86400000))}d restante${Math.max(0,Math.round((new Date(info.fin)-new Date("2026-04-24"))/86400000))!==1?"s":""} · ${info.sprint}`} icon="clock" iconColor={C.muted} />
+          <KpiCard label="Tareas entregadas" value={`${stats.done.length}/${stats.committed.length}`} valueColor={C.navy} sub={`${stats.pctItems}% del compromiso`} icon="check" iconColor={C.green} />
+          <KpiCard label="SP entregados" value={`${stats.spDone} SP`} valueColor={C.magenta} sub={`de ${stats.spTotal} comprometidos · ${stats.pctSP}%`} icon="layers" iconColor={C.magenta} />
+          <KpiCard label="Items bloqueados" value={stats.blocked.length} valueColor={stats.blocked.length>0?C.red:C.faint} sub={`${stats.spBlocked} SP en bloqueo`} icon="lock" iconColor={stats.blocked.length>0?C.red:C.faint} />
+          <KpiCard label="En revisión" value={stats.review.length} valueColor={C.navy} sub={`${stats.spReview} SP listos para validar`} icon="chevron" iconColor={C.muted} />
+        </div>
+
+        {/* Esfuerzo + BAU/Change + Equipo */}
+        <div style={{ display:"grid", gridTemplateColumns: tweaks.showTeamGrid ? "1fr 1fr 1fr" : "1fr 1fr", gap:14, alignItems:"stretch" }}>
+          <EsfuerzoCard stats={stats} />
+          <BauChangeCard items={items} />
+          {tweaks.showTeamGrid && <TeamGrid items={items} />}
+        </div>
+
+        <ItemsTable items={items} compact={tweaks.compactTable} />
+
+        <div style={{ fontSize:11, color:C.faint, textAlign:"center" }}>
+          TribuDatayAnalitica · Banco Guayaquil · {tweaks.mockMode ? "Datos de demostración" : "Azure DevOps"} · {new Date("2026-04-24T09:15:00").toLocaleDateString("es-EC", {day:"2-digit",month:"long",year:"numeric"})}
+        </div>
+      </div>
+
+      {showModal && <ContextModal cfg={cfg} onApply={handleApply} onClose={()=>setShowModal(false)} canClose={true} initialProyecto={context.proyecto} initialTeam={context.equipo} />}
+      {showTweaks && <TweaksPanel tweaks={tweaks} setTweaks={setTweaks} onClose={()=>{ setShowTweaks(false); window.parent.postMessage({type:"__edit_mode_dismissed"},"*"); }} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
