@@ -66,28 +66,6 @@ const MOCK_SPRINT_INFO = {
   sprintStart: "2026-04-07",
   sprintEnd:   "2026-04-25",
 };
-const MOCK_ITEMS = [
-  { id:1001, title:"Integración API de pagos",           state:"Done",             assignedTo:"Ana Torres",     sp:8,  area:"Pagos",           tipo:"Change", due:"2026-04-18" },
-  { id:1002, title:"Migración base de datos clientes",   state:"Done",             assignedTo:"Carlos Ruiz",    sp:5,  area:"Core Banking",     tipo:"BAU",    due:"2026-04-15" },
-  { id:1003, title:"Dashboard de reportes gerenciales",  state:"Done",             assignedTo:"Ana Torres",     sp:13, area:"Reporting",        tipo:"Change", due:"2026-04-20" },
-  { id:1004, title:"Autenticación biométrica móvil",     state:"Done",             assignedTo:"Luis Vera",      sp:8,  area:"Seguridad",        tipo:"Change", due:"2026-04-22" },
-  { id:1005, title:"Módulo de notificaciones push",      state:"Done",             assignedTo:"María Silva",    sp:5,  area:"Canales",          tipo:"Change", due:"2026-04-18" },
-  { id:1006, title:"Refactoring servicio de caché",      state:"Done",             assignedTo:"Pedro Mora",     sp:3,  area:"Backend",          tipo:"BAU",    due:"2026-04-16" },
-  { id:1007, title:"Tests de regresión API pagos",       state:"Done",             assignedTo:"Carlos Ruiz",    sp:3,  area:"QA",               tipo:"BAU",    due:"2026-04-17" },
-  { id:1008, title:"Validación formularios web",         state:"Done",             assignedTo:"María Silva",    sp:2,  area:"Frontend",         tipo:"BAU",    due:"2026-04-14" },
-  { id:1009, title:"Pipeline de datos analíticos",       state:"Doing",            assignedTo:"Ana Torres",     sp:13, area:"Data",             tipo:"Change", due:"2026-04-25" },
-  { id:1010, title:"Optimización de queries críticas",   state:"Doing",            assignedTo:"Pedro Mora",     sp:8,  area:"Backend",          tipo:"BAU",    due:"2026-04-24" },
-  { id:1011, title:"Módulo de scoring crediticio",       state:"Doing",            assignedTo:"Luis Vera",      sp:8,  area:"Riesgo",           tipo:"Change", due:"2026-04-25" },
-  { id:1012, title:"Integración con Salesforce CRM",     state:"Doing",            assignedTo:"Roberto Castro", sp:5,  area:"CRM",              tipo:"Change", due:"2026-04-23" },
-  { id:1013, title:"Fix: conciliación de transacciones", state:"Doing",            assignedTo:"Sofía León",     sp:3,  area:"Pagos",            tipo:"BAU",    due:"2026-04-22" },
-  { id:1014, title:"Onboarding digital v2.0",            state:"Revisión Calidad", assignedTo:"Roberto Castro", sp:8,  area:"Digital",          tipo:"Change", due:"2026-04-24" },
-  { id:1015, title:"Reporte regulatorio SBS Q1",         state:"Revisión Calidad", assignedTo:"Sofía León",     sp:5,  area:"Regulatorio",      tipo:"BAU",    due:"2026-04-23" },
-  { id:1016, title:"API gateway v3 — upgrade",           state:"Revisión Calidad", assignedTo:"Luis Vera",      sp:5,  area:"Infraestructura",  tipo:"Change", due:"2026-04-25" },
-  { id:1017, title:"Encriptación de datos sensibles",    state:"Blocked",          assignedTo:"Ana Torres",     sp:8,  area:"Seguridad",        tipo:"BAU",    due:"2026-04-21" },
-  { id:1018, title:"Conector Kafka → Data Lake",         state:"Blocked",          assignedTo:"Pedro Mora",     sp:5,  area:"Data",             tipo:"Change", due:"2026-04-22" },
-  { id:1019, title:"Actualización SDK móvil iOS",        state:"Backlog",          assignedTo:"Roberto Castro", sp:3,  area:"Mobile",           tipo:"Change", due:null },
-  { id:1020, title:"Documentación OpenAPI v3",           state:"Backlog",          assignedTo:"Sofía León",     sp:2,  area:"Dev Tools",        tipo:"BAU",    due:null },
-];
 
 // ── CONFIG / API UTILITIES ────────────────────────────────────────────────────
 function parseConfig(txt) {
@@ -315,7 +293,7 @@ EQUIPOS_Proyecto1=Equipo A,Equipo B`}</pre>
 }
 
 // ── HEADER ────────────────────────────────────────────────────────────────────
-function Header({ info, onRefresh, onChangeProject, mockMode, hasCfg, loading }) {
+function Header({ info, onRefresh, onChangeProject, hasCfg, loading }) {
   return (
     <div style={{ background:C.navy, color:'#fff', padding:'0 28px', display:'flex', alignItems:'center', justifyContent:'space-between', height:52, gap:16, position:'sticky', top:0, zIndex:50 }}>
       {/* Logo */}
@@ -326,9 +304,6 @@ function Header({ info, onRefresh, onChangeProject, mockMode, hasCfg, loading })
         <span style={{ fontWeight:800, fontSize:12, letterSpacing:'0.07em', textTransform:'uppercase', color:'#fff', lineHeight:1 }}>Banco Guayaquil</span>
         <div style={{ width:1, height:16, background:'rgba(255,255,255,0.15)' }}></div>
         <span style={{ fontWeight:600, fontSize:13, color:'rgba(255,255,255,0.7)' }}>Dashboard Sprint</span>
-        {mockMode && (
-          <span style={{ fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:4, background:'rgba(196,24,106,0.3)', color:'#F5A0C0', letterSpacing:'0.04em' }}>DEMO</span>
-        )}
       </div>
 
       {/* Context selector */}
@@ -757,11 +732,11 @@ function Pill({ state }) {
 }
 
 // ── ITEMS TABLE ───────────────────────────────────────────────────────────────
-function ItemsTable({ items, compact }) {
+function ItemsTable({ items }) {
   const [filter, setFilter] = useState('todos');
   const [page, setPage]     = useState(1);
   const PAGE_SIZE = 10;
-  const rowH = compact ? 36 : 46;
+  const rowH = 46;
 
   const tabs = [
     { id:'todos',      label:'Todos',       count: items.filter(i=>i.state!=='Backlog').length },
@@ -888,46 +863,9 @@ function ItemsTable({ items, compact }) {
   );
 }
 
-// ── TWEAKS PANEL ──────────────────────────────────────────────────────────────
-function TweaksPanel({ tweaks, setTweaks, onClose, hasCfg }) {
-  function Toggle({ val, onChange }) {
-    return (
-      <div onClick={onChange} style={{ width:38, height:22, borderRadius:11, background:val?C.magenta:C.border, cursor:'pointer', position:'relative', transition:'background 0.2s', flexShrink:0 }}>
-        <div style={{ position:'absolute', top:3, left:val?17:3, width:16, height:16, borderRadius:'50%', background:'#fff', transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.2)' }}></div>
-      </div>
-    );
-  }
-  function set(key, val) {
-    setTweaks(t => ({...t, [key]:val}));
-    window.parent.postMessage({type:'__edit_mode_set_keys', edits:{[key]:val}}, '*');
-  }
-  const rowStyle   = { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 };
-  const labelStyle = { fontSize:13, color:C.text };
-  return (
-    <div style={{ position:'fixed', bottom:24, right:24, background:'#fff', border:`1px solid ${C.border}`, borderRadius:10, padding:'18px 20px 14px', width:240, boxShadow:'0 8px 32px rgba(0,0,0,0.12)', zIndex:9999 }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-        <span style={{ fontWeight:700, fontSize:13, color:C.navy }}>Tweaks</span>
-        <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:C.muted, fontSize:20, lineHeight:1, padding:0 }}>×</button>
-      </div>
-      {hasCfg && (
-        <div style={rowStyle}><span style={labelStyle}>Datos demo</span><Toggle val={tweaks.mockMode} onChange={()=>set('mockMode',!tweaks.mockMode)} /></div>
-      )}
-      <div style={rowStyle}><span style={labelStyle}>Vista de equipo</span><Toggle val={tweaks.showTeamGrid} onChange={()=>set('showTeamGrid',!tweaks.showTeamGrid)} /></div>
-      <div style={rowStyle}><span style={labelStyle}>Tabla compacta</span><Toggle val={tweaks.compactTable} onChange={()=>set('compactTable',!tweaks.compactTable)} /></div>
-      <div style={{ fontSize:11, color:C.faint, borderTop:`1px solid ${C.borderLight}`, paddingTop:10, marginTop:2, textAlign:'center' }}>
-        {tweaks.mockMode ? 'Modo demostración activo' : 'Conectado a Azure DevOps'}
-      </div>
-    </div>
-  );
-}
-
 // ── APP ───────────────────────────────────────────────────────────────────────
-const TWEAK_DEFAULTS = { mockMode: false, compactTable: false, showTeamGrid: true };
-
 function App() {
-  const [tweaks, setTweaks]     = useState(TWEAK_DEFAULTS);
-  const [showTweaks, setShowTweaks] = useState(false);
-  const [showModal, setShowModal]   = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   const [cfg, setCfg]           = useState(null);
   const [context, setContext]   = useState(null);
@@ -939,16 +877,7 @@ function App() {
   const [fetchError, setFetchError]   = useState('');
   const [lastUpdate, setLastUpdate]   = useState(null);
 
-  useEffect(() => {
-    const handler = e => {
-      if (e.data?.type === '__activate_edit_mode')   setShowTweaks(true);
-      if (e.data?.type === '__deactivate_edit_mode') setShowTweaks(false);
-    };
-    window.addEventListener('message', handler);
-    window.parent.postMessage({ type:'__edit_mode_available' }, '*');
-    initApp();
-    return () => window.removeEventListener('message', handler);
-  }, []);
+  useEffect(() => { initApp(); }, []);
 
   async function initApp() {
     setLoadMsg('Leyendo config.txt...');
@@ -993,7 +922,6 @@ function App() {
       const raw = ids.length ? await fetchItems(loadedCfg, ctx.proyecto, ids) : [];
       setRealItems(raw.map(mapItem));
       setLastUpdate(new Date());
-      setTweaks(t => ({...t, mockMode: false}));
     } catch(e) {
       setFetchError(e.message);
     }
@@ -1022,18 +950,18 @@ function App() {
     return <Splash message={loadMsg} />;
   }
 
-  const hasCfg  = !!cfg;
-  const items   = tweaks.mockMode ? MOCK_ITEMS : realItems;
-  const info    = tweaks.mockMode ? MOCK_SPRINT_INFO : (context || MOCK_SPRINT_INFO);
-  const stats   = useMemo(() => computeStats(items), [items]);
-  const dayPct  = sprintDayProgress(info.sprintStart, info.sprintEnd);
+  const hasCfg   = !!cfg;
+  const items    = realItems;
+  const info     = context || MOCK_SPRINT_INFO;
+  const stats    = useMemo(() => computeStats(items), [items]);
+  const dayPct   = sprintDayProgress(info.sprintStart, info.sprintEnd);
   const daysLeft = info.sprintEnd
     ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
     : null;
 
   const footerDate = lastUpdate
     ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
-    : tweaks.mockMode ? 'Datos de demostración' : '—';
+    : '—';
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg }}>
@@ -1041,7 +969,6 @@ function App() {
         info={info}
         onRefresh={handleRefresh}
         onChangeProject={() => setShowModal(true)}
-        mockMode={tweaks.mockMode}
         hasCfg={hasCfg}
         loading={loading}
       />
@@ -1097,16 +1024,16 @@ function App() {
         </div>
 
         {/* Fila de cards */}
-        <div style={{ display:'grid', gridTemplateColumns: tweaks.showTeamGrid ? '1fr 1fr 1fr' : '1fr 1fr', gap:14, alignItems:'stretch' }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14, alignItems:'stretch' }}>
           <EsfuerzoCard stats={stats} />
           <BauChangeCard items={items} />
-          {tweaks.showTeamGrid && <TeamGrid items={items} />}
+          <TeamGrid items={items} />
         </div>
 
-        <ItemsTable items={items} compact={tweaks.compactTable} />
+        <ItemsTable items={items} />
 
         <div style={{ fontSize:11, color:C.faint, textAlign:'center' }}>
-          {info.proyecto} · {info.equipo} · Banco Guayaquil · {tweaks.mockMode ? 'Datos de demostración' : 'Azure DevOps'} · {footerDate}
+          {info.proyecto} · {info.equipo} · Banco Guayaquil · Azure DevOps · {footerDate}
         </div>
       </div>
 
@@ -1121,14 +1048,6 @@ function App() {
         />
       )}
 
-      {showTweaks && (
-        <TweaksPanel
-          tweaks={tweaks}
-          setTweaks={setTweaks}
-          hasCfg={hasCfg}
-          onClose={() => { setShowTweaks(false); window.parent.postMessage({type:'__edit_mode_dismissed'},'*'); }}
-        />
-      )}
     </div>
   );
 }
