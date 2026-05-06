@@ -272,7 +272,7 @@ function Icon({ name, size=16, color='currentColor', strokeWidth=1.75 }) {
 }
 
 // ── SPLASH / LOADING ──────────────────────────────────────────────────────────
-function Splash({ message, error }) {
+function Splash({ message }) {
   return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background:C.bg }}>
       <div style={{ width:44, height:44, borderRadius:12, background:GRAD_MAIN, display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -281,13 +281,35 @@ function Splash({ message, error }) {
       <div style={{ fontWeight:800, fontSize:13, letterSpacing:'0.07em', textTransform:'uppercase', color:C.navy }}>
         Banco Guayaquil · Dashboard Sprint
       </div>
-      {error
-        ? <div style={{ fontSize:13, color:C.red, background:C.redBg, padding:'10px 18px', borderRadius:8, maxWidth:420, textAlign:'center', border:`1px solid #F7C1C1` }}>{error}</div>
-        : <div style={{ fontSize:13, color:C.muted }}>{message}</div>
-      }
-      {!error && (
-        <div style={{ width:24, height:24, border:`3px solid ${C.border}`, borderTopColor:C.magenta, borderRadius:'50%', animation:'spin 0.7s linear infinite' }}></div>
-      )}
+      <div style={{ fontSize:13, color:C.muted }}>{message}</div>
+      <div style={{ width:24, height:24, border:`3px solid ${C.border}`, borderTopColor:C.magenta, borderRadius:'50%', animation:'spin 0.7s linear infinite' }}></div>
+    </div>
+  );
+}
+
+// ── CONFIG ERROR ──────────────────────────────────────────────────────────────
+function ConfigError() {
+  return (
+    <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:C.bg, padding:'2rem' }}>
+      <div style={{ background:'#fff', border:`1px solid ${C.border}`, borderRadius:14, padding:'36px 40px', maxWidth:400, width:'100%', boxShadow:'0 8px 40px rgba(0,0,0,0.08)', textAlign:'center' }}>
+        <div style={{ width:48, height:48, borderRadius:12, background:C.redBg, border:`1px solid #F7C1C1`, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 20px' }}>
+          <Icon name="alert" size={22} color={C.red} strokeWidth={2} />
+        </div>
+        <div style={{ fontWeight:800, fontSize:17, color:C.navy, marginBottom:8 }}>Error de configuración</div>
+        <div style={{ fontSize:13, color:C.muted, lineHeight:1.6, marginBottom:20 }}>
+          No se encontró un archivo <code style={{ background:C.bg, padding:'1px 6px', borderRadius:4, fontFamily:'monospace', fontSize:12 }}>config.txt</code> válido junto al dashboard.
+        </div>
+        <div style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, padding:'14px 16px', textAlign:'left', fontSize:12, color:C.muted, lineHeight:1.8 }}>
+          <div style={{ fontWeight:700, color:C.navy, marginBottom:6, fontSize:11, textTransform:'uppercase', letterSpacing:'0.06em' }}>Cómo resolverlo</div>
+          <div>1. Crea <code style={{ fontFamily:'monospace' }}>config.txt</code> en la misma carpeta que este archivo.</div>
+          <div>2. Agrega las siguientes líneas:</div>
+          <pre style={{ margin:'8px 0 4px', background:'#fff', border:`1px solid ${C.border}`, borderRadius:6, padding:'8px 10px', fontSize:11, overflowX:'auto', color:C.navy, lineHeight:1.7 }}>{`PAT=tu_personal_access_token
+ORG=tu_organizacion
+PROYECTOS=Proyecto1,Proyecto2
+EQUIPOS_Proyecto1=Equipo A,Equipo B`}</pre>
+          <div>3. Recarga la página.</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -911,10 +933,11 @@ function App() {
   const [context, setContext]   = useState(null);
   const [realItems, setRealItems] = useState([]);
 
-  const [loading, setLoading]   = useState(true);
-  const [loadMsg, setLoadMsg]   = useState('Iniciando...');
-  const [error, setError]       = useState('');
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [loadMsg, setLoadMsg]       = useState('Iniciando...');
+  const [configError, setConfigError] = useState(false);
+  const [fetchError, setFetchError]   = useState('');
+  const [lastUpdate, setLastUpdate]   = useState(null);
 
   useEffect(() => {
     const handler = e => {
@@ -954,16 +977,15 @@ function App() {
         setShowModal(true);
       }
     } else {
-      // No hay config válido → modo demo
-      setContext(MOCK_SPRINT_INFO);
-      setTweaks(t => ({...t, mockMode: true}));
+      // No hay config válido → mostrar pantalla de error
+      setConfigError(true);
       setLoading(false);
     }
   }
 
   async function doLoadData(loadedCfg, ctx) {
     setLoading(true);
-    setError('');
+    setFetchError('');
     try {
       setLoadMsg(`Consultando ${ctx.equipo}...`);
       const ids = await wiqlQuery(loadedCfg, ctx);
@@ -973,7 +995,7 @@ function App() {
       setLastUpdate(new Date());
       setTweaks(t => ({...t, mockMode: false}));
     } catch(e) {
-      setError(e.message);
+      setFetchError(e.message);
     }
     setLoading(false);
   }
@@ -990,9 +1012,14 @@ function App() {
     doLoadData(cfg, ctx);
   }
 
+  // Error de config → pantalla de error, sin dashboard
+  if (configError) {
+    return <ConfigError />;
+  }
+
   // Aún cargando config y no hay contexto todavía
   if (loading && !context) {
-    return <Splash message={loadMsg} error={error} />;
+    return <Splash message={loadMsg} />;
   }
 
   const hasCfg  = !!cfg;
@@ -1021,10 +1048,10 @@ function App() {
 
       <div style={{ maxWidth:1280, margin:'0 auto', padding:'28px 36px 40px', display:'flex', flexDirection:'column', gap:18 }}>
 
-        {/* Error banner (cuando ya hay datos pero hubo un error al refrescar) */}
-        {error && (
+        {/* Error banner al refrescar */}
+        {fetchError && (
           <div style={{ background:C.redBg, border:`1px solid #F7C1C1`, borderRadius:8, padding:'10px 16px', fontSize:13, color:C.red }}>
-            ⚠ {error}
+            ⚠ {fetchError}
           </div>
         )}
 
