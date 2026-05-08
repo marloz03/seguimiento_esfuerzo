@@ -940,16 +940,7 @@ function App() {
     doLoadData(cfg, ctx);
   }
 
-  // Error de config → pantalla de error, sin dashboard
-  if (configError) {
-    return <ConfigError />;
-  }
-
-  // Aún cargando config y no hay contexto todavía
-  if (loading && !context) {
-    return <Splash message={loadMsg} />;
-  }
-
+  // Hooks siempre antes de cualquier return condicional
   const hasCfg   = !!cfg;
   const items    = realItems;
   const info     = context || MOCK_SPRINT_INFO;
@@ -958,10 +949,18 @@ function App() {
   const daysLeft = info.sprintEnd
     ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
     : null;
-
   const footerDate = lastUpdate
     ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
     : '—';
+
+  // Returns condicionales después de todos los hooks
+  if (configError) {
+    return <ConfigError />;
+  }
+
+  if (loading && !context) {
+    return <Splash message={loadMsg} />;
+  }
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg }}>
