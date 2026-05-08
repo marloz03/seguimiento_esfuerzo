@@ -210,7 +210,7 @@ function computeTeam(items) {
     const n = item.assignedTo;
     if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0 };
     m[n].items.push(item);
-    m[n].spTotal += item.sp;
+    if (item.state !== 'Backlog') m[n].spTotal += item.sp;
     if (item.state === 'Done') m[n].spDone += item.sp;
   });
   return Object.values(m).sort((a,b) => b.spTotal - a.spTotal);
@@ -615,13 +615,12 @@ function BauChangeCard({ items }) {
 
 // ── ESFUERZO CARD ─────────────────────────────────────────────────────────────
 function EsfuerzoCard({ stats }) {
-  const { spDone, spDoing, spReview, spBlocked, spBacklog, spTotal } = stats;
+  const { spDone, spDoing, spReview, spBlocked, spTotal } = stats;
   const segs = [
     { label:'Entregado',   sp:spDone,    color:C.magenta },
     { label:'En progreso', sp:spDoing,   color:'#3A6BB5' },
     { label:'En revisión', sp:spReview,  color:'#7B5EA7' },
     { label:'Bloqueado',   sp:spBlocked, color:C.red },
-    { label:'Pendiente',   sp:spBacklog, color:C.faint },
   ].filter(s => s.sp > 0);
 
   return (
@@ -686,7 +685,7 @@ function TeamGrid({ items }) {
         </div>
         <Icon name="users" size={16} color={C.faint} />
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:`repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap:6, overflowY:'auto', maxHeight:200, paddingRight:2 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:6, overflowY:'auto', maxHeight:200, paddingRight:2 }}>
         {team.map((member, idx) => {
           const color = personColor(member.name, idx);
           const pct = member.spTotal ? Math.round(member.spDone / member.spTotal * 100) : 0;
@@ -928,6 +927,20 @@ function App() {
     setLoading(false);
   }
 
+  // Todos los hooks deben ir ANTES de cualquier return condicional
+  const hasCfg   = !!cfg;
+  const items    = realItems;
+  const info     = context || MOCK_SPRINT_INFO;
+  const stats    = useMemo(() => computeStats(items), [items]);
+  const dayPct   = sprintDayProgress(info.sprintStart, info.sprintEnd);
+  const daysLeft = info.sprintEnd
+    ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
+    : null;
+
+  const footerDate = lastUpdate
+    ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
+    : '—';
+
   async function handleRefresh() {
     if (!cfg || !context) return;
     await doLoadData(cfg, context);
@@ -949,19 +962,6 @@ function App() {
   if (loading && !context) {
     return <Splash message={loadMsg} />;
   }
-
-  const hasCfg   = !!cfg;
-  const items    = realItems;
-  const info     = context || MOCK_SPRINT_INFO;
-  const stats    = useMemo(() => computeStats(items), [items]);
-  const dayPct   = sprintDayProgress(info.sprintStart, info.sprintEnd);
-  const daysLeft = info.sprintEnd
-    ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
-    : null;
-
-  const footerDate = lastUpdate
-    ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
-    : '—';
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg }}>
