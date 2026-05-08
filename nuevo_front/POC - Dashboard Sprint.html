@@ -210,7 +210,7 @@ function computeTeam(items) {
     const n = item.assignedTo;
     if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0 };
     m[n].items.push(item);
-    m[n].spTotal += item.sp;
+    if (item.state !== 'Backlog') m[n].spTotal += item.sp;
     if (item.state === 'Done') m[n].spDone += item.sp;
   });
   return Object.values(m).sort((a,b) => b.spTotal - a.spTotal);
