@@ -685,7 +685,7 @@ function TeamGrid({ items }) {
         </div>
         <Icon name="users" size={16} color={C.faint} />
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:`repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap:6, overflowY:'auto', maxHeight:200, paddingRight:2 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:6, overflowY:'auto', maxHeight:200, paddingRight:2 }}>
         {team.map((member, idx) => {
           const color = personColor(member.name, idx);
           const pct = member.spTotal ? Math.round(member.spDone / member.spTotal * 100) : 0;
