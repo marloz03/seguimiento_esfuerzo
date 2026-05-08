@@ -615,13 +615,12 @@ function BauChangeCard({ items }) {
 
 // ── ESFUERZO CARD ─────────────────────────────────────────────────────────────
 function EsfuerzoCard({ stats }) {
-  const { spDone, spDoing, spReview, spBlocked, spBacklog, spTotal } = stats;
+  const { spDone, spDoing, spReview, spBlocked, spTotal } = stats;
   const segs = [
     { label:'Entregado',   sp:spDone,    color:C.magenta },
     { label:'En progreso', sp:spDoing,   color:'#3A6BB5' },
     { label:'En revisión', sp:spReview,  color:'#7B5EA7' },
     { label:'Bloqueado',   sp:spBlocked, color:C.red },
-    { label:'Pendiente',   sp:spBacklog, color:C.faint },
   ].filter(s => s.sp > 0);
 
   return (
