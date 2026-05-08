@@ -928,6 +928,20 @@ function App() {
     setLoading(false);
   }
 
+  // Todos los hooks deben ir ANTES de cualquier return condicional
+  const hasCfg   = !!cfg;
+  const items    = realItems;
+  const info     = context || MOCK_SPRINT_INFO;
+  const stats    = useMemo(() => computeStats(items), [items]);
+  const dayPct   = sprintDayProgress(info.sprintStart, info.sprintEnd);
+  const daysLeft = info.sprintEnd
+    ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
+    : null;
+
+  const footerDate = lastUpdate
+    ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
+    : '—';
+
   async function handleRefresh() {
     if (!cfg || !context) return;
     await doLoadData(cfg, context);
@@ -949,19 +963,6 @@ function App() {
   if (loading && !context) {
     return <Splash message={loadMsg} />;
   }
-
-  const hasCfg   = !!cfg;
-  const items    = realItems;
-  const info     = context || MOCK_SPRINT_INFO;
-  const stats    = useMemo(() => computeStats(items), [items]);
-  const dayPct   = sprintDayProgress(info.sprintStart, info.sprintEnd);
-  const daysLeft = info.sprintEnd
-    ? Math.max(0, Math.round((new Date(info.sprintEnd) - new Date()) / 86400000))
-    : null;
-
-  const footerDate = lastUpdate
-    ? `Actualizado ${lastUpdate.toLocaleTimeString('es-EC', {hour:'2-digit',minute:'2-digit'})}`
-    : '—';
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg }}>
