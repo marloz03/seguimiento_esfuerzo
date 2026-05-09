@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Traición en la Mazmorra</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- LOBBY -->
+  <div id="screen-lobby" class="screen active">
+    <div class="lobby-box">
+      <h1>⚔️ Traición en la Mazmorra</h1>
+      <p class="subtitle">4-10 jugadores · Un traidor entre vosotros</p>
+      <input id="input-name" type="text" maxlength="16" placeholder="Tu nombre de guerrero..." />
+      <button id="btn-join">Entrar a la mazmorra</button>
+      <div id="player-list-lobby"></div>
+      <button id="btn-start" class="hidden">⚔️ Iniciar Partida</button>
+      <p class="hint">Comparte esta página con tus amigos en la misma red.</p>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="screen-game" class="screen">
+    <div id="ui-top">
+      <div id="role-banner"></div>
+      <div id="hp-display"></div>
+    </div>
+    <div id="game-area">
+      <canvas id="canvas"></canvas>
+      <div id="dm-panel" class="hidden">
+        <h3>Panel del Dungeon Master</h3>
+        <p class="dm-hint">Haz clic en trampas o puertas del mapa para activarlas.</p>
+        <button id="btn-spawn">🐀 Invocar Monstruo (clic en el mapa)</button>
+        <div id="dm-status"></div>
+      </div>
+    </div>
+    <div id="controls-hint">
+      <span>Mover: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> o flechas</span>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <!-- END -->
+  <div id="screen-end" class="screen">
+    <div class="end-box">
+      <h2 id="end-title"></h2>
+      <p id="end-msg"></p>
+      <button id="btn-restart">🔄 Jugar de nuevo</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
