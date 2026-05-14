@@ -771,8 +771,6 @@ function App() {
 
       <div style={{ maxWidth:1280, margin:"0 auto", padding:"28px 36px 40px", display:"flex", flexDirection:"column", gap:18 }}>
 
-        <StatusHero stats={stats} dayPct={dayPct} info={info} />
-
         {/* KPIs */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
           <KpiCard label="Tiempo del sprint"  value={`${dayPct}%`}                    sub={`${restantes}d restante${restantes!==1?"s":""} · ${info.sprint}`}   icon="clock"    iconColor={C.muted} />
