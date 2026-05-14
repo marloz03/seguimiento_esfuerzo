@@ -55,8 +55,12 @@ const GRAD_STATUS = {
 // ── FECHA DE HOY (dinámica) ───────────────────────────────────────────────────
 const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
-// ── WIP LIMIT ────────────────────────────────────────────────────────────────
-const WIP_LIMIT = 6;   // máximo de items en Doing al mismo tiempo para el equipo
+// ── SP CAPACITY ──────────────────────────────────────────────────────────────
+// SP que una persona puede tener "en curso" (Doing) simultáneamente.
+// En la versión real puede venir de:
+//   a) config.txt (constante o por persona)
+//   b) ADO Capacity API (horas/día) × velocidad histórica del equipo
+const SP_CAPACITY = 13;
 
 // ── MOCK DATA ─────────────────────────────────────────────────────────────────
 const MOCK_SPRINT_INFO = {
@@ -146,27 +150,23 @@ function computeStats(items) {
   const atrasados = committed.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
   return { committed, done, blocked, doing, review, backlog, spTotal, spDone, spDoing, spReview, spBlocked, spBacklog, pctItems, pctSP, atrasados };
 }
-function computeTeam(items) {
+function computeTeam(items, capacity = SP_CAPACITY) {
   const m = {};
   items.forEach(item => {
     const n = item.assignedTo;
-    if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0, wip:0 };
+    if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0, spDoing:0 };
     m[n].items.push(item);
     m[n].spTotal += item.sp;
-    if (item.state === "Done")  m[n].spDone += item.sp;
-    if (item.state === "Doing") m[n].wip    += 1;
+    if (item.state === "Done")  m[n].spDone  += item.sp;
+    if (item.state === "Doing") m[n].spDoing += item.sp;
   });
-  return Object.values(m).sort((a,b) => b.spTotal - a.spTotal);
-}
-function computeWip(items) {
-  const doing = items.filter(i => i.state === "Doing");
-  const byPerson = {};
-  doing.forEach(i => {
-    const n = i.assignedTo;
-    if (!byPerson[n]) byPerson[n] = { name:n, items:[] };
-    byPerson[n].items.push(i);
-  });
-  return { total: doing.length, byPerson: Object.values(byPerson).sort((a,b) => b.items.length - a.items.length) };
+  return Object.values(m).map(p => ({
+    ...p,
+    capacity,
+    pctCapacity:  capacity > 0 ? Math.round(p.spDoing / capacity * 100) : 0,
+    overCapacity: p.spDoing > capacity,
+    nearCapacity: p.spDoing > 0 && p.spDoing <= capacity && p.spDoing / capacity >= 0.8,
+  })).sort((a,b) => b.spDoing - a.spDoing);
 }
 function urgencyScore(item) {
   const d = diasAtraso(item.due, item.state);
@@ -489,113 +489,48 @@ function Avatar({ name, idx, size=32 }) {
 }
 function TeamGrid({ items }) {
   const team = computeTeam(items);
+  const overloaded = team.filter(p => p.overCapacity).length;
   return (
     <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:16, height:"100%" }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
-        <div>
-          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Equipo</div>
-          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>Carga por persona</div>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexShrink:0, gap:10 }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Carga por persona</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>SP en curso vs capacidad ({SP_CAPACITY})</div>
         </div>
-        <Icon name="users" size={16} color={C.faint} />
+        {overloaded > 0
+          ? <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize:10, fontWeight:700, padding:"3px 7px", borderRadius:4, background:C.redBg, color:C.red, whiteSpace:"nowrap" }}>{overloaded} SOBRECARGAD{overloaded>1?"OS":"O"}</span>
+          : <Icon name="users" size={16} color={C.faint} />}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:`repeat(${team.length<=4?1:2},1fr)`, gap:6, overflowY:"auto", maxHeight:198, paddingRight:2 }}>
-        {team.map((member,idx) => {
-          const color = personColor(member.name,idx);
-          const pct = member.spTotal ? Math.round(member.spDone/member.spTotal*100) : 0;
-          const isBlocked = member.items.some(i=>i.state==="Blocked");
-          const firstName = member.name.split(" ")[0];
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${team.length<=4?1:2},1fr)`, gap:6, overflowY:"auto", paddingRight:2 }}>
+        {team.map((p,idx) => {
+          const color = personColor(p.name,idx);
+          const isBlocked = p.items.some(i=>i.state==="Blocked");
+          const firstName = p.name.split(" ")[0];
+          const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
+          const rowBg      = p.overCapacity ? C.redBg : C.bg;
+          const rowBorder  = p.overCapacity ? "#F7C1C1" : C.borderLight;
+          const barFill    = Math.min(p.pctCapacity, 100);
           return (
-            <div key={member.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, background:C.bg, minWidth:0 }}>
-              <Avatar name={member.name} idx={idx} size={30} />
+            <div key={p.name} title={p.items.filter(i=>i.state==="Doing").map(i=>`${i.title} (${i.sp} SP)`).join(" · ") || "Sin items en progreso"}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, background:rowBg, border:`1px solid ${rowBorder}`, minWidth:0 }}>
+              <Avatar name={p.name} idx={idx} size={30} />
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5 }}>
                   <span style={{ fontWeight:600, fontSize:12, color:C.navy, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{firstName}</span>
                   {isBlocked && <span style={{ fontSize:9, fontWeight:700, padding:"1px 5px", borderRadius:3, background:C.redBg, color:C.red, flexShrink:0 }}>BLOQ</span>}
-                  <span style={{ fontSize:11, fontWeight:700, color, marginLeft:"auto", flexShrink:0, whiteSpace:"nowrap" }}>
-                    {member.spDone}<span style={{ color:C.faint, fontWeight:500 }}>/{member.spTotal}</span>
+                  <span style={{ fontSize:11, fontWeight:700, color:statusColor, marginLeft:"auto", flexShrink:0, whiteSpace:"nowrap" }}>
+                    {p.spDoing}<span style={{ color:C.faint, fontWeight:500 }}>/{p.capacity}</span>
                     <span style={{ fontSize:10, color:C.muted, fontWeight:400, marginLeft:2 }}>SP</span>
                   </span>
                 </div>
-                <div style={{ height:4, borderRadius:2, background:C.borderLight, overflow:"hidden" }}>
-                  <div style={{ width:`${pct}%`, height:"100%", background:color, borderRadius:2, transition:"width 0.5s ease" }}></div>
+                <div style={{ height:5, borderRadius:3, background:C.borderLight, overflow:"hidden", position:"relative" }}>
+                  <div style={{ width:`${barFill}%`, height:"100%", background:statusColor, borderRadius:3, transition:"width 0.5s ease" }}></div>
+                  {p.overCapacity && <div style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", background:`repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents:"none" }}></div>}
                 </div>
               </div>
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// ── WIP CARD ──────────────────────────────────────────────────────────────────
-function WipCard({ items }) {
-  const { total, byPerson } = computeWip(items);
-  const overLimit  = total > WIP_LIMIT;
-  const nearLimit  = !overLimit && total >= WIP_LIMIT - 1;
-  const statusColor = overLimit ? C.red : nearLimit ? C.amber : C.green;
-  const statusBg    = overLimit ? C.redBg : nearLimit ? C.amberBg : C.greenBg;
-  const statusText  = overLimit
-    ? `Exceso de ${total - WIP_LIMIT} item${total-WIP_LIMIT>1?"s":""} sobre el límite`
-    : nearLimit ? "Cerca del límite — monitorear"
-    : "Dentro del límite — OK";
-
-  const pct = Math.min(Math.round(total / WIP_LIMIT * 100), 100);
-  const barColor = overLimit ? C.red : nearLimit ? C.amber : C.green;
-
-  return (
-    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:16, height:"100%" }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div>
-          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>WIP · Work in Progress</div>
-          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>Exceso de trabajo simultáneo</div>
-        </div>
-        <Icon name="zap" size={16} color={C.faint} />
-      </div>
-
-      {/* Gauge */}
-      <div>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 }}>
-          <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
-            <span style={{ fontSize:44, fontWeight:800, color:statusColor, lineHeight:1 }}>{total}</span>
-            <span style={{ fontSize:16, color:C.faint, fontWeight:500 }}>/ {WIP_LIMIT}</span>
-          </div>
-          <span style={{ fontSize:11, fontWeight:600, color:statusColor }}>items en progreso</span>
-        </div>
-        <div style={{ background:C.borderLight, borderRadius:5, height:10, overflow:"hidden" }}>
-          <div style={{ width:`${pct}%`, height:"100%", background:barColor, borderRadius:5, transition:"width 0.5s ease" }}></div>
-        </div>
-        <div style={{ marginTop:8, fontSize:12, fontWeight:600, color:statusColor, background:statusBg, borderRadius:6, padding:"5px 10px", display:"inline-block" }}>
-          {statusText}
-        </div>
-      </div>
-
-      {/* Por persona — compacto */}
-      <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0 }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
-          <span style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", color:C.muted }}>Por persona</span>
-          <span style={{ fontSize:10, color:C.faint }}>{byPerson.filter(p=>p.items.length>1).length} con &gt;1 item</span>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
-          {byPerson.map((p, idx) => {
-            const over = p.items.length > 1;
-            return (
-              <div key={p.name} title={p.items.map(i=>i.title).join(" · ")}
-                style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 10px", borderRadius:6, background: over ? C.redBg : C.bg, border:`1px solid ${over ? "#F7C1C1" : C.borderLight}` }}>
-                <Avatar name={p.name} idx={idx} size={22} />
-                <span style={{ fontSize:12, fontWeight:600, color:C.navy, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name.split(" ")[0]}</span>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <div style={{ display:"flex", gap:2 }}>
-                    {Array.from({length: p.items.length}).map((_,i) => (
-                      <div key={i} style={{ width:6, height:6, borderRadius:1, background: over ? C.red : "#3A6BB5" }}></div>
-                    ))}
-                  </div>
-                  <span style={{ fontSize:13, fontWeight:800, color: over ? C.red : C.navy, minWidth:14, textAlign:"right" }}>{p.items.length}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
@@ -830,7 +765,8 @@ function App() {
   const dayPct    = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
   const restantes = daysUntilEnd(MOCK_SPRINT_INFO.fin);
   const todayStr  = TODAY.toLocaleDateString("es-EC", { day:"2-digit", month:"long", year:"numeric" });
-  const wipData   = useMemo(() => computeWip(items), []);
+  const team      = useMemo(() => computeTeam(items), []);
+  const overloaded = team.filter(p => p.overCapacity).length;
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg }}>
@@ -845,22 +781,19 @@ function App() {
           <KpiCard label="Tiempo del sprint"  value={`${dayPct}%`}                    sub={`${restantes}d restante${restantes!==1?"s":""} · ${info.sprint}`}   icon="clock"    iconColor={C.muted} />
           <KpiCard label="% Compromiso cumplido" value={`${stats.pctItems}%`}         sub={`${stats.done.length}/${stats.committed.length} tareas · ${stats.pctSP}% SP`} icon="check" iconColor={C.green} />
           <KpiCard label="SP entregados"      value={`${stats.spDone} SP`}             valueColor={C.magenta} sub={`de ${stats.spTotal} comprometidos`}          icon="layers"   iconColor={C.magenta} />
-          <KpiCard label="WIP actual"         value={wipData.total}                    valueColor={wipData.total>WIP_LIMIT?C.red:wipData.total>=WIP_LIMIT-1?C.amber:C.green} sub={`límite: ${WIP_LIMIT} items · ${wipData.total>WIP_LIMIT?"⚠ excedido":"OK"}`} icon="zap" iconColor={wipData.total>WIP_LIMIT?C.red:C.faint} />
+          <KpiCard label="Sobrecargados"      value={overloaded}                       valueColor={overloaded>0?C.red:C.faint} sub={`personas con SP en curso > ${SP_CAPACITY}`} icon="zap" iconColor={overloaded>0?C.red:C.faint} />
           <KpiCard label="Bloqueados"         value={stats.blocked.length}             valueColor={stats.blocked.length>0?C.red:C.faint} sub={`${stats.spBlocked} SP detenidos`} icon="lock" iconColor={stats.blocked.length>0?C.red:C.faint} />
         </div>
 
-        {/* Fila 1: Esfuerzo + BAU/Change + Team */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, alignItems:"stretch" }}>
+        {/* Fila 1: Esfuerzo + BAU/Change + Team (carga por persona) */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.2fr", gap:14, alignItems:"stretch" }}>
           <EsfuerzoCard stats={stats} />
           <BauChangeCard items={items} />
           <TeamGrid items={items} />
         </div>
 
-        {/* Fila 2: WIP + Throughput */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1.5fr", gap:14, alignItems:"stretch" }}>
-          <WipCard items={items} />
-          <ThroughputCard data={MOCK_THROUGHPUT} />
-        </div>
+        {/* Fila 2: Throughput a ancho completo */}
+        <ThroughputCard data={MOCK_THROUGHPUT} />
 
         <ItemsTable items={items} />
 
