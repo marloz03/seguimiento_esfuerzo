@@ -23,7 +23,7 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo } = React;
 
-// ── PALETTE ──────────────────────────────────────────────────────────────────
+// ── PALETTE ───────────────────────────────────────────────────────────────────
 const C = {
   navy:        "#0B1D3A",
   navyDeep:    "#060F1F",
@@ -34,15 +34,14 @@ const C = {
   magentaLight:"#FAEBF2",
   white:       "#FFFFFF",
   bg:          "#F0F2F5",
-  card:        "#FFFFFF",
   border:      "#DDE1EB",
   borderLight: "#EEF0F5",
   text:        "#0B1D3A",
   muted:       "#6B7A99",
   faint:       "#B0BAD0",
-  red:         "#D63B3B", redBg: "#FDF0F0", redText: "#8B1A1A",
-  amber:       "#C47B0E", amberBg:"#FDF5E6", amberText:"#7A4B00",
-  green:       "#1B8C55", greenBg:"#EAF5EF", greenText:"#0D5232",
+  red:         "#D63B3B", redBg:   "#FDF0F0",
+  amber:       "#C47B0E", amberBg: "#FDF5E6",
+  green:       "#1B8C55", greenBg: "#EAF5EF",
 };
 
 const GRAD_MAIN   = `linear-gradient(125deg, ${C.navyDeep} 0%, ${C.navyMid} 55%, ${C.magentaDark} 100%)`;
@@ -56,6 +55,9 @@ const GRAD_STATUS = {
 // ── FECHA DE HOY (dinámica) ───────────────────────────────────────────────────
 const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
+// ── WIP LIMIT ────────────────────────────────────────────────────────────────
+const WIP_LIMIT = 6;   // máximo de items en Doing al mismo tiempo para el equipo
+
 // ── MOCK DATA ─────────────────────────────────────────────────────────────────
 const MOCK_SPRINT_INFO = {
   proyecto: "TribuDatayAnalitica",
@@ -65,7 +67,18 @@ const MOCK_SPRINT_INFO = {
   fin:      "2026-05-23",
 };
 
-// due dates relativas a hoy (2026-05-14) para que el semáforo sea representativo
+// Throughput histórico: HU y SP completados por sprint
+const MOCK_THROUGHPUT = [
+  { sprint:"Sp 21", hu:12, sp:64,  current:false },
+  { sprint:"Sp 22", hu:15, sp:83,  current:false },
+  { sprint:"Sp 23", hu:10, sp:52,  current:false },
+  { sprint:"Sp 24", hu:14, sp:76,  current:false },
+  { sprint:"Sp 25", hu:16, sp:90,  current:false },
+  { sprint:"Sp 26", hu:13, sp:70,  current:false },
+  { sprint:"Sp 27", hu:8,  sp:44,  current:true  },  // en curso (parcial)
+];
+
+// 2 items Doing extra en Ana y Pedro para que WIP supere el límite en la demo
 const MOCK_ITEMS = [
   { id:1001, title:"Integración API de pagos",           state:"Done",             assignedTo:"Ana Torres",     sp:8,  area:"Pagos",          tipo:"Change", due:"2026-05-09" },
   { id:1002, title:"Migración base de datos clientes",   state:"Done",             assignedTo:"Carlos Ruiz",    sp:5,  area:"Core Banking",    tipo:"BAU",    due:"2026-05-08" },
@@ -80,6 +93,8 @@ const MOCK_ITEMS = [
   { id:1011, title:"Módulo de scoring crediticio",       state:"Doing",            assignedTo:"Luis Vera",      sp:8,  area:"Riesgo",          tipo:"Change", due:"2026-05-16" },
   { id:1012, title:"Integración con Salesforce CRM",     state:"Doing",            assignedTo:"Roberto Castro", sp:5,  area:"CRM",             tipo:"Change", due:"2026-05-21" },
   { id:1013, title:"Fix: conciliación de transacciones", state:"Doing",            assignedTo:"Sofía León",     sp:3,  area:"Pagos",           tipo:"BAU",    due:"2026-05-12" },
+  { id:1021, title:"Integración OAuth 2.0",              state:"Doing",            assignedTo:"Ana Torres",     sp:5,  area:"Seguridad",       tipo:"Change", due:"2026-05-14" },
+  { id:1022, title:"Limpieza datos históricos DWH",      state:"Doing",            assignedTo:"Pedro Mora",     sp:3,  area:"Data",            tipo:"BAU",    due:"2026-05-13" },
   { id:1014, title:"Onboarding digital v2.0",            state:"Revisión Calidad", assignedTo:"Roberto Castro", sp:8,  area:"Digital",         tipo:"Change", due:"2026-05-15" },
   { id:1015, title:"Reporte regulatorio SBS Q2",         state:"Revisión Calidad", assignedTo:"Sofía León",     sp:5,  area:"Regulatorio",     tipo:"BAU",    due:"2026-05-16" },
   { id:1016, title:"API gateway v3 — upgrade",           state:"Revisión Calidad", assignedTo:"Luis Vera",      sp:5,  area:"Infraestructura", tipo:"Change", due:"2026-05-19" },
@@ -135,12 +150,23 @@ function computeTeam(items) {
   const m = {};
   items.forEach(item => {
     const n = item.assignedTo;
-    if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0 };
+    if (!m[n]) m[n] = { name:n, items:[], spTotal:0, spDone:0, wip:0 };
     m[n].items.push(item);
     m[n].spTotal += item.sp;
-    if (item.state === "Done") m[n].spDone += item.sp;
+    if (item.state === "Done")  m[n].spDone += item.sp;
+    if (item.state === "Doing") m[n].wip    += 1;
   });
   return Object.values(m).sort((a,b) => b.spTotal - a.spTotal);
+}
+function computeWip(items) {
+  const doing = items.filter(i => i.state === "Doing");
+  const byPerson = {};
+  doing.forEach(i => {
+    const n = i.assignedTo;
+    if (!byPerson[n]) byPerson[n] = { name:n, items:[] };
+    byPerson[n].items.push(i);
+  });
+  return { total: doing.length, byPerson: Object.values(byPerson).sort((a,b) => b.items.length - a.items.length) };
 }
 function urgencyScore(item) {
   const d = diasAtraso(item.due, item.state);
@@ -159,28 +185,19 @@ function DueDateCell({ due, state }) {
   if (!due) return <span style={{ color:C.faint, fontSize:12 }}>—</span>;
   const dias = diasAtraso(due, state);
   const dateStr = formatShortDate(due);
-  if (state === "Done") {
-    return <span style={{ fontSize:12, color:C.green }}>{dateStr}</span>;
-  }
-  if (dias === null) {
-    return <span style={{ fontSize:12, color:C.muted }}>{dateStr}</span>;
-  }
-  if (dias > 0) {
-    return (
-      <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
-        <span style={{ fontSize:12, fontWeight:600, color:C.red }}>{dateStr}</span>
-        <span style={{ fontSize:10, fontWeight:700, color:C.red }}>+{dias}d</span>
-      </div>
-    );
-  }
-  if (dias === 0) {
-    return (
-      <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
-        <span style={{ fontSize:12, fontWeight:600, color:C.amber }}>{dateStr}</span>
-        <span style={{ fontSize:10, fontWeight:600, color:C.amber }}>hoy</span>
-      </div>
-    );
-  }
+  if (state === "Done") return <span style={{ fontSize:12, color:C.green }}>{dateStr}</span>;
+  if (dias > 0) return (
+    <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
+      <span style={{ fontSize:12, fontWeight:600, color:C.red }}>{dateStr}</span>
+      <span style={{ fontSize:10, fontWeight:700, color:C.red }}>+{dias}d</span>
+    </div>
+  );
+  if (dias === 0) return (
+    <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
+      <span style={{ fontSize:12, fontWeight:600, color:C.amber }}>{dateStr}</span>
+      <span style={{ fontSize:10, fontWeight:600, color:C.amber }}>hoy</span>
+    </div>
+  );
   const faltan = Math.abs(dias);
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
@@ -192,7 +209,7 @@ function DueDateCell({ due, state }) {
 
 // ── ICON ──────────────────────────────────────────────────────────────────────
 function Icon({ name, size=16, color="currentColor", strokeWidth=1.75 }) {
-  const d = {
+  const paths = {
     check:    "M4 13l5 5L20 7",
     alert:    "M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
     clock:    "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-6v-4m0-4h.01",
@@ -203,10 +220,12 @@ function Icon({ name, size=16, color="currentColor", strokeWidth=1.75 }) {
     lock:     "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
     trending: "M23 6l-9.5 9.5-5-5L1 18",
     calendar: "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
+    zap:      "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+    bar:      "M18 20V10M12 20V4M6 20v-6",
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
-      <path d={d[name] || ""}></path>
+      <path d={paths[name] || ""}></path>
     </svg>
   );
 }
@@ -219,24 +238,24 @@ function Header({ info, onRefresh, onChangeProject }) {
         <div style={{ width:26, height:26, borderRadius:6, background:GRAD_MAIN, display:"flex", alignItems:"center", justifyContent:"center" }}>
           <Icon name="trending" size={13} color="#fff" strokeWidth={2.5} />
         </div>
-        <span style={{ fontWeight:800, fontSize:12, letterSpacing:"0.07em", textTransform:"uppercase", color:"#fff", lineHeight:1 }}>Banco Guayaquil</span>
+        <span style={{ fontWeight:800, fontSize:12, letterSpacing:"0.07em", textTransform:"uppercase", color:"#fff" }}>Banco Guayaquil</span>
         <div style={{ width:1, height:16, background:"rgba(255,255,255,0.15)" }}></div>
         <span style={{ fontWeight:600, fontSize:13, color:"rgba(255,255,255,0.7)" }}>Dashboard Sprint</span>
         <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:4, background:"rgba(196,24,106,0.35)", color:"#F5A0C0", letterSpacing:"0.06em" }}>DEMO</span>
       </div>
 
-      <button onClick={onChangeProject} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", fontFamily:"inherit", transition:"background 0.15s" }}
+      <button onClick={onChangeProject} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", fontFamily:"inherit" }}
         onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
         onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
         <span style={{ fontSize:12, color:"rgba(255,255,255,0.5)" }}>{info.proyecto}</span>
         <span style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>›</span>
         <span style={{ fontSize:12, color:"rgba(255,255,255,0.75)", fontWeight:600 }}>{info.equipo}</span>
         <span style={{ fontSize:12, color:"rgba(255,255,255,0.25)" }}>›</span>
-        <span style={{ fontSize:12, color:"#fff", fontWeight:700 }}>{info.sprint || "Todos los sprints"}</span>
+        <span style={{ fontSize:12, color:"#fff", fontWeight:700 }}>{info.sprint || "Todos"}</span>
         <Icon name="chevron" size={12} color="rgba(255,255,255,0.4)" strokeWidth={2} />
       </button>
 
-      <button onClick={onRefresh} title="Actualizar" style={{ display:"flex", alignItems:"center", justifyContent:"center", width:32, height:32, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", flexShrink:0, transition:"background 0.15s" }}
+      <button onClick={onRefresh} title="Actualizar" style={{ display:"flex", alignItems:"center", justifyContent:"center", width:32, height:32, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", flexShrink:0 }}
         onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
         onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
         <Icon name="refresh" size={14} color="rgba(255,255,255,0.7)" />
@@ -250,37 +269,34 @@ function StatusHero({ stats, dayPct, info }) {
   const { blocked, atrasados, pctSP, pctItems, done, committed, spDone, spTotal } = stats;
   let grad, statusLabel, statusSub, statusTag;
   if (blocked.length > 0) {
-    grad = GRAD_STATUS.risk; statusLabel = "Sprint en riesgo"; statusTag = "CRÍTICO";
+    grad = GRAD_STATUS.risk;  statusLabel = "Sprint en riesgo";     statusTag = "CRÍTICO";
     statusSub = `${blocked.length} item${blocked.length>1?"s":""} bloqueado${blocked.length>1?"s":""}. Se requiere acción inmediata para desbloquear.`;
   } else if (atrasados.length > 0) {
-    grad = GRAD_STATUS.alert; statusLabel = "Sprint con alertas"; statusTag = "ATENCIÓN";
+    grad = GRAD_STATUS.alert; statusLabel = "Sprint con alertas";   statusTag = "ATENCIÓN";
     statusSub = `${atrasados.length} item${atrasados.length>1?"s":""} con due date vencida. Revisar con responsables hoy.`;
   } else if (pctSP >= 70) {
-    grad = GRAD_STATUS.good; statusLabel = "Sprint en buen ritmo"; statusTag = "EN CURSO";
+    grad = GRAD_STATUS.good;  statusLabel = "Sprint en buen ritmo"; statusTag = "EN CURSO";
     statusSub = `${pctSP}% del esfuerzo comprometido fue entregado. El equipo va al ritmo esperado.`;
   } else {
     grad = GRAD_STATUS.neutral; statusLabel = "Sprint en progreso"; statusTag = "EN CURSO";
     statusSub = `${pctSP}% del esfuerzo entregado. Monitorear que no se acumule al cierre del sprint.`;
   }
-
   const restantes = daysUntilEnd(info.fin);
 
   return (
     <div style={{ background:grad, borderRadius:10, padding:"28px 32px", display:"flex", alignItems:"center", gap:32, flexWrap:"wrap", position:"relative", overflow:"hidden" }}>
       <div style={{ position:"absolute", right:-60, top:-60, width:240, height:240, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }}></div>
       <div style={{ position:"absolute", right:60, bottom:-80, width:180, height:180, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }}></div>
-
       <div style={{ flex:1, minWidth:240 }}>
         <div style={{ display:"inline-block", fontSize:10, fontWeight:700, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:3, background:"rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.9)", marginBottom:10 }}>{statusTag}</div>
         <div style={{ fontSize:26, fontWeight:800, color:"#fff", lineHeight:1.1, marginBottom:8 }}>{statusLabel}</div>
         <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", lineHeight:1.5, maxWidth:420 }}>{statusSub}</div>
       </div>
-
       <div style={{ display:"flex", gap:0, flexWrap:"wrap" }}>
         {[
-          { label:"Tiempo transcurrido", value:`${dayPct}%`,                 sub:`${restantes}d restante${restantes!==1?"s":""}` },
+          { label:"Tiempo transcurrido", value:`${dayPct}%`,                        sub:`${restantes}d restante${restantes!==1?"s":""}` },
           { label:"Tareas entregadas",   value:`${done.length}/${committed.length}`, sub:`${pctItems}% del compromiso` },
-          { label:"Esfuerzo entregado",  value:`${spDone}/${spTotal} SP`,    sub:`${pctSP}% de los SP` },
+          { label:"Esfuerzo entregado",  value:`${spDone}/${spTotal} SP`,            sub:`${pctSP}% de los SP` },
         ].map((s,i) => (
           <div key={i} style={{ padding:"0 28px", borderLeft:"1px solid rgba(255,255,255,0.12)", textAlign:"center" }}>
             <div style={{ fontSize:10, fontWeight:600, letterSpacing:"0.06em", textTransform:"uppercase", color:"rgba(255,255,255,0.5)", marginBottom:6 }}>{s.label}</div>
@@ -310,10 +326,10 @@ function KpiCard({ label, value, valueColor, sub, icon, iconColor }) {
 // ── DEMO CONTEXT MODAL ────────────────────────────────────────────────────────
 const DEMO_PROYECTOS = ["TribuDatayAnalitica","TribuBusinessBanking","TribuSeguros","TribuEverydayBanking"];
 const DEMO_EQUIPOS   = {
-  TribuDatayAnalitica:    ["LinkUp","LinkUpPeople","LinkUpProyectosData","tda-data-team"],
-  TribuBusinessBanking:   ["Banca Digital Team"],
-  TribuSeguros:           ["TribuSeguros Team"],
-  TribuEverydayBanking:   ["Autogestion Team"],
+  TribuDatayAnalitica:   ["LinkUp","LinkUpPeople","LinkUpProyectosData","tda-data-team"],
+  TribuBusinessBanking:  ["Banca Digital Team"],
+  TribuSeguros:          ["TribuSeguros Team"],
+  TribuEverydayBanking:  ["Autogestion Team"],
 };
 const DEMO_SPRINTS = ["Sprint 25","Sprint 26","Sprint 27 ✓ activo","Sprint 28"];
 
@@ -321,24 +337,20 @@ function ContextModal({ context, onApply, onClose }) {
   const [proyecto, setProyecto] = useState(context.proyecto);
   const [equipo,   setEquipo]   = useState(context.equipo);
   const [sprint,   setSprint]   = useState(context.sprint);
-
   const equipos = DEMO_EQUIPOS[proyecto] || [];
   const inputStyle = { width:"100%", padding:"8px 10px", border:`1px solid ${C.border}`, borderRadius:7, fontSize:13, fontFamily:"inherit", color:C.navy, background:"#FAFBFD", outline:"none" };
   const labelStyle = { fontSize:11, fontWeight:600, color:C.muted, textTransform:"uppercase", letterSpacing:"0.06em", display:"block", marginBottom:5 };
-
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(6,15,31,0.55)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:"2rem" }}>
       <div style={{ background:"#fff", borderRadius:12, padding:"28px 28px 24px", width:"100%", maxWidth:420, boxShadow:"0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ fontWeight:800, fontSize:16, color:C.navy, marginBottom:4 }}>Seleccionar contexto</div>
         <div style={{ fontSize:13, color:C.muted, marginBottom:20 }}>Proyecto → Equipo → Sprint · <span style={{ color:C.magenta, fontWeight:600 }}>Modo demo</span></div>
-
         <div style={{ marginBottom:14 }}>
           <label style={labelStyle}>Proyecto</label>
           <select value={proyecto} onChange={e=>{ setProyecto(e.target.value); setEquipo(""); }} style={inputStyle}>
             {DEMO_PROYECTOS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
-
         {proyecto && (
           <div style={{ marginBottom:14 }}>
             <label style={labelStyle}>Equipo</label>
@@ -348,7 +360,6 @@ function ContextModal({ context, onApply, onClose }) {
             </select>
           </div>
         )}
-
         {equipo && (
           <div style={{ marginBottom:14 }}>
             <label style={labelStyle}>Sprint</label>
@@ -357,12 +368,9 @@ function ContextModal({ context, onApply, onClose }) {
             </select>
           </div>
         )}
-
         <div style={{ display:"flex", gap:8, marginTop:4 }}>
           <button onClick={onClose} style={{ padding:"9px 18px", fontSize:13, fontWeight:600, border:`1px solid ${C.border}`, borderRadius:7, background:"#fff", color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>Cancelar</button>
-          <button
-            disabled={!proyecto || !equipo}
-            onClick={()=>onApply({ proyecto, equipo, sprint: sprint.replace(" ✓ activo","") })}
+          <button disabled={!proyecto||!equipo} onClick={()=>onApply({ proyecto, equipo, sprint: sprint.replace(" ✓ activo","") })}
             style={{ flex:1, padding:"9px 18px", fontSize:13, fontWeight:700, border:"none", borderRadius:7, background:(!proyecto||!equipo)?C.faint:C.navy, color:"#fff", cursor:(!proyecto||!equipo)?"not-allowed":"pointer", fontFamily:"inherit" }}>
             Ver dashboard
           </button>
@@ -372,20 +380,18 @@ function ContextModal({ context, onApply, onClose }) {
   );
 }
 
-// ── BAU VS CHANGE CARD ────────────────────────────────────────────────────────
+// ── BAU VS CHANGE ─────────────────────────────────────────────────────────────
 function BauChangeCard({ items }) {
   const committed = items.filter(i => i.state !== "Backlog");
   const bau    = committed.filter(i => i.tipo === "BAU");
   const change = committed.filter(i => i.tipo === "Change");
-  const spBau    = bau.reduce((s,i) => s+i.sp, 0);
-  const spChange = change.reduce((s,i) => s+i.sp, 0);
-  const total    = committed.length;
-  const spTotal  = spBau + spChange;
-  const pctBauT  = total   ? Math.round(bau.length/total*100)   : 0;
-  const pctChgT  = total   ? Math.round(change.length/total*100): 0;
-  const pctBauSP = spTotal ? Math.round(spBau/spTotal*100)      : 0;
-  const pctChgSP = spTotal ? Math.round(spChange/spTotal*100)   : 0;
-
+  const spBau    = bau.reduce((s,i)=>s+i.sp,0);
+  const spChange = change.reduce((s,i)=>s+i.sp,0);
+  const total = committed.length, spTotal = spBau + spChange;
+  const rows = [
+    { label:"Tareas", tot:total,   a:bau.length,  b:change.length, aSuf:"",     bSuf:"",     aPct:total?Math.round(bau.length/total*100):0,     bPct:total?Math.round(change.length/total*100):0 },
+    { label:"Story Points", tot:spTotal, a:spBau, b:spChange,      aSuf:" SP",  bSuf:" SP",  aPct:spTotal?Math.round(spBau/spTotal*100):0,     bPct:spTotal?Math.round(spChange/spTotal*100):0 },
+  ];
   return (
     <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"20px 24px", display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -395,19 +401,15 @@ function BauChangeCard({ items }) {
         </div>
         <Icon name="layers" size={16} color={C.faint} />
       </div>
-
-      {[
-        { label:"Tareas", total, a:bau.length, b:change.length, aLabel:"BAU", bLabel:"Change", aSuf:"", bSuf:"", aPct:pctBauT, bPct:pctChgT },
-        { label:"Story Points", total:spTotal, a:spBau, b:spChange, aLabel:"BAU", bLabel:"Change", aSuf:" SP", bSuf:" SP", aPct:pctBauSP, bPct:pctChgSP },
-      ].map(row => (
+      {rows.map(row => (
         <div key={row.label}>
-          <span style={{ fontSize:11, color:C.muted, fontWeight:500 }}>{row.label} ({row.total})</span>
+          <span style={{ fontSize:11, color:C.muted, fontWeight:500 }}>{row.label} ({row.tot})</span>
           <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", gap:2, margin:"6px 0" }}>
-            <div style={{ flex:row.a||0.001, background:C.navy, borderRadius:"5px 0 0 5px", minWidth:4 }}></div>
+            <div style={{ flex:row.a||0.001, background:C.navy,    borderRadius:"5px 0 0 5px", minWidth:4 }}></div>
             <div style={{ flex:row.b||0.001, background:C.magenta, borderRadius:"0 5px 5px 0", minWidth:4 }}></div>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between" }}>
-            {[{label:row.aLabel, val:row.a, suf:row.aSuf, pct:row.aPct, color:C.navy},{label:row.bLabel, val:row.b, suf:row.bSuf, pct:row.bPct, color:C.magenta}].map(s => (
+            {[{label:"BAU",color:C.navy,val:row.a,suf:row.aSuf,pct:row.aPct},{label:"Change",color:C.magenta,val:row.b,suf:row.bSuf,pct:row.bPct}].map(s=>(
               <div key={s.label} style={{ display:"flex", alignItems:"center", gap:6 }}>
                 <div style={{ width:8, height:8, borderRadius:2, background:s.color }}></div>
                 <span style={{ fontSize:12, color:C.muted }}>{s.label}</span>
@@ -432,7 +434,6 @@ function EsfuerzoCard({ stats }) {
     { label:"Bloqueado",   sp:spBlocked, color:C.red },
     { label:"Pendiente",   sp:spBacklog, color:C.faint },
   ].filter(s => s.sp > 0);
-
   return (
     <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:20, height:"100%" }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -442,7 +443,6 @@ function EsfuerzoCard({ stats }) {
         </div>
         <Icon name="layers" size={16} color={C.faint} />
       </div>
-
       <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
         <span style={{ fontSize:52, fontWeight:800, color:C.magenta, lineHeight:1 }}>{spDone}</span>
         <div>
@@ -450,11 +450,10 @@ function EsfuerzoCard({ stats }) {
           <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Story points entregados</div>
         </div>
       </div>
-
       <div>
         <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden", gap:2 }}>
           {segs.map((s,i) => (
-            <div key={i} title={`${s.label}: ${s.sp} SP`} style={{ flex:s.sp, background:s.color, minWidth:4, borderRadius: i===0 ? "5px 0 0 5px" : i===segs.length-1 ? "0 5px 5px 0" : 0 }}></div>
+            <div key={i} title={`${s.label}: ${s.sp} SP`} style={{ flex:s.sp, background:s.color, minWidth:4, borderRadius: i===0?"5px 0 0 5px":i===segs.length-1?"0 5px 5px 0":0 }}></div>
           ))}
         </div>
         <div style={{ display:"flex", flexWrap:"wrap", gap:"6px 18px", marginTop:12 }}>
@@ -474,10 +473,7 @@ function EsfuerzoCard({ stats }) {
 // ── TEAM GRID ─────────────────────────────────────────────────────────────────
 const PERSON_COLORS = ["#0B4DB5","#8B1A6B","#1B6E5E","#7B3FB5","#B54A00","#005C80","#6B4A00"];
 function personColor(name, idx) {
-  const map = {
-    "Ana Torres":"#0B4DB5","Carlos Ruiz":"#1B6E5E","Luis Vera":"#7B3FB5",
-    "María Silva":"#B54A00","Pedro Mora":"#8B1A6B","Roberto Castro":"#005C80","Sofía León":"#6B4A00",
-  };
+  const map = { "Ana Torres":"#0B4DB5","Carlos Ruiz":"#1B6E5E","Luis Vera":"#7B3FB5","María Silva":"#B54A00","Pedro Mora":"#8B1A6B","Roberto Castro":"#005C80","Sofía León":"#6B4A00" };
   return map[name] || PERSON_COLORS[idx % PERSON_COLORS.length];
 }
 function Avatar({ name, idx, size=32 }) {
@@ -499,11 +495,11 @@ function TeamGrid({ items }) {
         </div>
         <Icon name="users" size={16} color={C.faint} />
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:`repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap:6, overflowY:"auto", maxHeight:198, paddingRight:2 }}>
-        {team.map((member, idx) => {
-          const color = personColor(member.name, idx);
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${team.length<=4?1:2},1fr)`, gap:6, overflowY:"auto", maxHeight:198, paddingRight:2 }}>
+        {team.map((member,idx) => {
+          const color = personColor(member.name,idx);
           const pct = member.spTotal ? Math.round(member.spDone/member.spTotal*100) : 0;
-          const isBlocked = member.items.some(i => i.state === "Blocked");
+          const isBlocked = member.items.some(i=>i.state==="Blocked");
           const firstName = member.name.split(" ")[0];
           return (
             <div key={member.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:8, background:C.bg, minWidth:0 }}>
@@ -524,6 +520,161 @@ function TeamGrid({ items }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── WIP CARD ──────────────────────────────────────────────────────────────────
+function WipCard({ items }) {
+  const { total, byPerson } = computeWip(items);
+  const overLimit  = total > WIP_LIMIT;
+  const nearLimit  = !overLimit && total >= WIP_LIMIT - 1;
+  const statusColor = overLimit ? C.red : nearLimit ? C.amber : C.green;
+  const statusBg    = overLimit ? C.redBg : nearLimit ? C.amberBg : C.greenBg;
+  const statusText  = overLimit
+    ? `Exceso de ${total - WIP_LIMIT} item${total-WIP_LIMIT>1?"s":""} sobre el límite`
+    : nearLimit
+    ? "Cerca del límite — monitorear"
+    : "Dentro del límite — OK";
+
+  const pct = Math.min(Math.round(total / WIP_LIMIT * 100), 100);
+  const barColor = overLimit ? C.red : nearLimit ? C.amber : C.green;
+
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:18 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>WIP · Work in Progress</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>Exceso de trabajo simultáneo</div>
+        </div>
+        <Icon name="zap" size={16} color={C.faint} />
+      </div>
+
+      {/* Gauge */}
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 }}>
+          <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+            <span style={{ fontSize:44, fontWeight:800, color:statusColor, lineHeight:1 }}>{total}</span>
+            <span style={{ fontSize:16, color:C.faint, fontWeight:500 }}>/ {WIP_LIMIT}</span>
+          </div>
+          <span style={{ fontSize:11, fontWeight:600, color:statusColor }}>items en progreso</span>
+        </div>
+        <div style={{ background:C.borderLight, borderRadius:5, height:10, overflow:"hidden" }}>
+          <div style={{ width:`${pct}%`, height:"100%", background:barColor, borderRadius:5, transition:"width 0.5s ease" }}></div>
+        </div>
+        <div style={{ marginTop:8, fontSize:12, fontWeight:600, color:statusColor, background:statusBg, borderRadius:6, padding:"5px 10px", display:"inline-block" }}>
+          {statusText}
+        </div>
+      </div>
+
+      {/* Por persona */}
+      <div>
+        <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", color:C.muted, marginBottom:8 }}>Por persona</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          {byPerson.map((p,idx) => {
+            const color = personColor(p.name, idx);
+            const over2 = p.items.length > 1;
+            return (
+              <div key={p.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", borderRadius:8, background: over2 ? C.redBg : C.bg, border:`1px solid ${over2 ? "#F7C1C1" : C.borderLight}` }}>
+                <Avatar name={p.name} idx={idx} size={26} />
+                <span style={{ fontSize:12, fontWeight:600, color:C.navy, flex:1 }}>{p.name.split(" ")[0]}</span>
+                <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                  {p.items.map(item => (
+                    <span key={item.id} title={item.title} style={{ fontSize:10, padding:"2px 6px", borderRadius:4, background:over2?"rgba(214,59,59,0.12)":"rgba(58,107,181,0.12)", color:over2?C.red:"#3A6BB5", fontWeight:600, maxWidth:100, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {item.title.length > 18 ? item.title.substring(0,18)+"…" : item.title}
+                    </span>
+                  ))}
+                  <span style={{ fontSize:12, fontWeight:800, color:over2?C.red:C.navy, marginLeft:4 }}>{p.items.length}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── THROUGHPUT CARD ───────────────────────────────────────────────────────────
+function ThroughputCard({ data }) {
+  const [view, setView] = useState("hu");  // "hu" | "sp"
+  const past    = data.filter(d => !d.current);
+  const current = data.find(d => d.current);
+  const vals    = past.map(d => view === "hu" ? d.hu : d.sp);
+  const maxVal  = Math.max(...data.map(d => view==="hu"?d.hu:d.sp), 1);
+  const avgPast = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : 0;
+  const lastVal = past.length ? vals[vals.length-1] : 0;
+  const trend   = lastVal > avgPast ? "↑" : lastVal < avgPast ? "↓" : "→";
+  const trendColor = lastVal > avgPast ? C.green : lastVal < avgPast ? C.amber : C.muted;
+
+  return (
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"22px 24px", display:"flex", flexDirection:"column", gap:18 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, marginBottom:4 }}>Throughput</div>
+          <div style={{ fontSize:14, fontWeight:700, color:C.navy }}>HU completadas por sprint</div>
+        </div>
+        <div style={{ display:"flex", gap:4 }}>
+          {[{id:"hu",label:"HU"},{id:"sp",label:"SP"}].map(t=>(
+            <button key={t.id} onClick={()=>setView(t.id)} style={{ fontSize:11, fontWeight:600, padding:"4px 10px", borderRadius:5, border:"1px solid", borderColor:view===t.id?C.navy:C.border, background:view===t.id?C.navy:"transparent", color:view===t.id?"#fff":C.muted, cursor:"pointer", fontFamily:"inherit" }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Promedio + tendencia */}
+      <div style={{ display:"flex", gap:20 }}>
+        <div>
+          <div style={{ fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", color:C.muted, marginBottom:4 }}>Promedio últimos 6 sprints</div>
+          <div style={{ fontSize:28, fontWeight:800, color:C.navy }}>{avgPast} <span style={{ fontSize:13, fontWeight:500, color:C.faint }}>{view==="hu"?"HU":"SP"}</span></div>
+        </div>
+        <div style={{ borderLeft:`1px solid ${C.borderLight}`, paddingLeft:20 }}>
+          <div style={{ fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", color:C.muted, marginBottom:4 }}>Tendencia</div>
+          <div style={{ fontSize:28, fontWeight:800, color:trendColor }}>{trend}</div>
+        </div>
+        <div style={{ borderLeft:`1px solid ${C.borderLight}`, paddingLeft:20 }}>
+          <div style={{ fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", color:C.muted, marginBottom:4 }}>Sprint actual (parcial)</div>
+          <div style={{ fontSize:28, fontWeight:800, color:C.magenta }}>
+            {view==="hu"?current?.hu:current?.sp}
+            <span style={{ fontSize:13, fontWeight:500, color:C.faint }}> {view==="hu"?"HU":"SP"}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Bar chart */}
+      <div>
+        <div style={{ display:"flex", alignItems:"flex-end", gap:8, height:80 }}>
+          {data.map((d,i) => {
+            const val = view==="hu" ? d.hu : d.sp;
+            const h   = Math.round(val / maxVal * 72);
+            return (
+              <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
+                <span style={{ fontSize:10, fontWeight:700, color:d.current?C.magenta:C.muted }}>{val}</span>
+                <div style={{ width:"100%", display:"flex", flexDirection:"column", justifyContent:"flex-end", height:60 }}>
+                  <div title={`${d.sprint}: ${val} ${view==="hu"?"HU":"SP"}`} style={{
+                    width:"100%", height:h, borderRadius:"4px 4px 0 0",
+                    background: d.current
+                      ? `linear-gradient(180deg, ${C.magenta} 0%, ${C.magentaDark} 100%)`
+                      : i===data.length-2
+                      ? C.navyLight
+                      : C.borderLight,
+                    border: d.current ? `none` : `1px solid ${C.border}`,
+                    transition:"height 0.4s ease",
+                    position:"relative",
+                  }}>
+                    {/* línea de promedio */}
+                  </div>
+                </div>
+                <span style={{ fontSize:9, fontWeight:d.current?700:500, color:d.current?C.magenta:C.muted, whiteSpace:"nowrap" }}>{d.sprint}</span>
+              </div>
+            );
+          })}
+        </div>
+        {/* línea promedio */}
+        <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:24, height:2, background:C.amber, borderRadius:1 }}></div>
+          <span style={{ fontSize:11, color:C.muted }}>Promedio: {avgPast} {view==="hu"?"HU":"SP"} / sprint</span>
+        </div>
       </div>
     </div>
   );
@@ -556,7 +707,6 @@ function ItemsTable({ items }) {
     { id:"revision",   label:"En revisión", count:items.filter(i=>i.state==="Revisión Calidad").length },
     { id:"done",       label:"Done",        count:items.filter(i=>i.state==="Done").length },
   ];
-
   const visible = useMemo(() => {
     let list = [...items];
     if      (filter==="bloqueados") list = list.filter(i=>i.state==="Blocked");
@@ -565,7 +715,7 @@ function ItemsTable({ items }) {
     else if (filter==="revision")   list = list.filter(i=>i.state==="Revisión Calidad");
     else if (filter==="done")       list = list.filter(i=>i.state==="Done");
     else                            list = list.filter(i=>i.state!=="Backlog");
-    return list.sort((a,b) => urgencyScore(a)-urgencyScore(b));
+    return list.sort((a,b)=>urgencyScore(a)-urgencyScore(b));
   }, [items, filter]);
 
   const totalPages = Math.ceil(visible.length / PAGE_SIZE);
@@ -574,8 +724,8 @@ function ItemsTable({ items }) {
 
   const btnPage = active => ({
     width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center",
-    borderRadius:6, border:`1px solid ${active ? C.navy : C.border}`,
-    background: active ? C.navy : "#fff", color: active ? "#fff" : C.muted,
+    borderRadius:6, border:`1px solid ${active?C.navy:C.border}`,
+    background:active?C.navy:"#fff", color:active?"#fff":C.muted,
     fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit",
   });
 
@@ -589,14 +739,11 @@ function ItemsTable({ items }) {
           <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
             {tabs.map(t => (
               <button key={t.id} onClick={()=>setFilter(t.id)} style={{
-                fontSize:11, fontWeight:600, padding:"5px 11px", borderRadius:5,
-                border:"1px solid",
-                borderColor: filter===t.id ? C.navy : C.border,
-                background:  filter===t.id ? C.navy : "transparent",
-                color:       filter===t.id ? "#fff" : C.muted,
-                cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
+                fontSize:11, fontWeight:600, padding:"5px 11px", borderRadius:5, border:"1px solid",
+                borderColor:filter===t.id?C.navy:C.border, background:filter===t.id?C.navy:"transparent",
+                color:filter===t.id?"#fff":C.muted, cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
               }}>
-                {t.label}{t.count>0 ? <span style={{ marginLeft:4, opacity:0.65 }}>{t.count}</span> : ""}
+                {t.label}{t.count>0?<span style={{ marginLeft:4, opacity:0.65 }}>{t.count}</span>:""}
               </button>
             ))}
           </div>
@@ -615,7 +762,7 @@ function ItemsTable({ items }) {
             {paginated.length===0 && (
               <tr><td colSpan={COLS.length} style={{ textAlign:"center", padding:"2.5rem", color:C.faint, fontSize:13 }}>Sin items en esta categoría</td></tr>
             )}
-            {paginated.map((item, idx) => {
+            {paginated.map((item,idx) => {
               const isBlocked = item.state === "Blocked";
               return (
                 <tr key={item.id} style={{ borderBottom:`1px solid ${C.borderLight}` }}
@@ -654,12 +801,10 @@ function ItemsTable({ items }) {
       </div>
       {totalPages > 1 && (
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 20px", borderTop:`1px solid ${C.borderLight}` }}>
-          <span style={{ fontSize:12, color:C.muted }}>
-            {(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE, visible.length)} de {visible.length} items
-          </span>
+          <span style={{ fontSize:12, color:C.muted }}>{(page-1)*PAGE_SIZE+1}–{Math.min(page*PAGE_SIZE,visible.length)} de {visible.length} items</span>
           <div style={{ display:"flex", gap:4 }}>
             <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1} style={{ ...btnPage(false), opacity:page===1?0.4:1 }}>‹</button>
-            {Array.from({length:totalPages},(_,i)=>i+1).map(p => (
+            {Array.from({length:totalPages},(_,i)=>i+1).map(p=>(
               <button key={p} onClick={()=>setPage(p)} style={btnPage(p===page)}>{p}</button>
             ))}
             <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages} style={{ ...btnPage(false), opacity:page===totalPages?0.4:1 }}>›</button>
@@ -673,19 +818,15 @@ function ItemsTable({ items }) {
 // ── APP ───────────────────────────────────────────────────────────────────────
 function App() {
   const [showModal, setShowModal] = useState(false);
-  const [context, setContext] = useState({
-    proyecto: MOCK_SPRINT_INFO.proyecto,
-    equipo:   MOCK_SPRINT_INFO.equipo,
-    sprint:   MOCK_SPRINT_INFO.sprint,
-  });
+  const [context, setContext] = useState({ proyecto:MOCK_SPRINT_INFO.proyecto, equipo:MOCK_SPRINT_INFO.equipo, sprint:MOCK_SPRINT_INFO.sprint });
 
-  const info   = { ...MOCK_SPRINT_INFO, ...context };
-  const items  = MOCK_ITEMS;
-  const stats  = useMemo(() => computeStats(items), []);
-  const dayPct = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
+  const info      = { ...MOCK_SPRINT_INFO, ...context };
+  const items     = MOCK_ITEMS;
+  const stats     = useMemo(() => computeStats(items), []);
+  const dayPct    = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
   const restantes = daysUntilEnd(MOCK_SPRINT_INFO.fin);
-
-  const todayStr = TODAY.toLocaleDateString("es-EC", { day:"2-digit", month:"long", year:"numeric" });
+  const todayStr  = TODAY.toLocaleDateString("es-EC", { day:"2-digit", month:"long", year:"numeric" });
+  const wipData   = useMemo(() => computeWip(items), []);
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg }}>
@@ -695,48 +836,26 @@ function App() {
 
         <StatusHero stats={stats} dayPct={dayPct} info={info} />
 
-        {/* KPI row */}
+        {/* KPIs */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
-          <KpiCard
-            label="Tiempo del sprint"
-            value={`${dayPct}%`}
-            sub={`${restantes}d restante${restantes!==1?"s":""} · ${info.sprint}`}
-            icon="clock" iconColor={C.muted}
-          />
-          <KpiCard
-            label="Tareas entregadas"
-            value={`${stats.done.length}/${stats.committed.length}`}
-            sub={`${stats.pctItems}% del compromiso`}
-            icon="check" iconColor={C.green}
-          />
-          <KpiCard
-            label="SP entregados"
-            value={`${stats.spDone} SP`}
-            valueColor={C.magenta}
-            sub={`de ${stats.spTotal} comprometidos · ${stats.pctSP}%`}
-            icon="layers" iconColor={C.magenta}
-          />
-          <KpiCard
-            label="Items bloqueados"
-            value={stats.blocked.length}
-            valueColor={stats.blocked.length>0 ? C.red : C.faint}
-            sub={`${stats.spBlocked} SP en bloqueo`}
-            icon="lock" iconColor={stats.blocked.length>0 ? C.red : C.faint}
-          />
-          <KpiCard
-            label="Atrasados"
-            value={stats.atrasados.length}
-            valueColor={stats.atrasados.length>0 ? C.amber : C.faint}
-            sub={`con due date vencida`}
-            icon="calendar" iconColor={stats.atrasados.length>0 ? C.amber : C.faint}
-          />
+          <KpiCard label="Tiempo del sprint"  value={`${dayPct}%`}                    sub={`${restantes}d restante${restantes!==1?"s":""} · ${info.sprint}`}   icon="clock"    iconColor={C.muted} />
+          <KpiCard label="% Compromiso cumplido" value={`${stats.pctItems}%`}         sub={`${stats.done.length}/${stats.committed.length} tareas · ${stats.pctSP}% SP`} icon="check" iconColor={C.green} />
+          <KpiCard label="SP entregados"      value={`${stats.spDone} SP`}             valueColor={C.magenta} sub={`de ${stats.spTotal} comprometidos`}          icon="layers"   iconColor={C.magenta} />
+          <KpiCard label="WIP actual"         value={wipData.total}                    valueColor={wipData.total>WIP_LIMIT?C.red:wipData.total>=WIP_LIMIT-1?C.amber:C.green} sub={`límite: ${WIP_LIMIT} items · ${wipData.total>WIP_LIMIT?"⚠ excedido":"OK"}`} icon="zap" iconColor={wipData.total>WIP_LIMIT?C.red:C.faint} />
+          <KpiCard label="Bloqueados"         value={stats.blocked.length}             valueColor={stats.blocked.length>0?C.red:C.faint} sub={`${stats.spBlocked} SP detenidos`} icon="lock" iconColor={stats.blocked.length>0?C.red:C.faint} />
         </div>
 
-        {/* Esfuerzo + BAU/Change + Equipo */}
+        {/* Fila 1: Esfuerzo + BAU/Change + Team */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, alignItems:"stretch" }}>
           <EsfuerzoCard stats={stats} />
           <BauChangeCard items={items} />
           <TeamGrid items={items} />
+        </div>
+
+        {/* Fila 2: WIP + Throughput */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1.6fr", gap:14, alignItems:"start" }}>
+          <WipCard items={items} />
+          <ThroughputCard data={MOCK_THROUGHPUT} />
         </div>
 
         <ItemsTable items={items} />
