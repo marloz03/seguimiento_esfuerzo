@@ -192,7 +192,7 @@ async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName) 
 const IN_PROGRESS = ['Doing', 'Entendimiento'];
 
 function computeStats(items) {
-  const committed   = items.filter(i => !['Backlog', 'Removed'].includes(i.state));
+  const committed   = items.filter(i => i.state !== 'Removed');
   const done        = items.filter(i => i.state === 'Done');
   const blocked     = items.filter(i => i.state === 'Bloqueado');
   const doing       = items.filter(i => i.state === 'Doing');
@@ -418,7 +418,7 @@ function EsfuerzoCard({ stats }) {
 // ── BAU VS CHANGE ─────────────────────────────────────────────────────────────
 // Todo se trata como BAU por ahora hasta que se defina el campo en ADO
 function BauChangeCard({ items }) {
-  const committed = items.filter(i => !['Backlog', 'Removed'].includes(i.state));
+  const committed = items.filter(i => i.state !== 'Removed');
   const spTotal   = committed.reduce((s, i) => s + (i.sp || 0), 0);
   const rows = [
     { label: 'Tareas',        tot: committed.length, bau: committed.length, change: 0, spBau: spTotal, spChange: 0 },
@@ -598,11 +598,12 @@ function ItemsTable({ items }) {
   const PAGE_SIZE = 8;
 
   const tabs = [
-    { id: 'todos',      label: 'Todos',       count: items.filter(i => i.state !== 'Backlog').length },
+    { id: 'todos',      label: 'Todos',       count: items.length },
     { id: 'bloqueados', label: 'Bloqueados',  count: items.filter(i => i.state === 'Bloqueado').length },
     { id: 'atrasados',  label: 'Atrasados',   count: items.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; }).length },
     { id: 'doing',      label: 'En progreso', count: items.filter(i => IN_PROGRESS.includes(i.state)).length },
     { id: 'revision',   label: 'En revisión', count: items.filter(i => i.state === 'Revisión Calidad').length },
+    { id: 'backlog',    label: 'Backlog',     count: items.filter(i => i.state === 'Backlog').length },
     { id: 'done',       label: 'Done',        count: items.filter(i => i.state === 'Done').length },
   ];
 
@@ -612,8 +613,8 @@ function ItemsTable({ items }) {
     else if (filter === 'atrasados')  list = list.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
     else if (filter === 'doing')      list = list.filter(i => IN_PROGRESS.includes(i.state));
     else if (filter === 'revision')   list = list.filter(i => i.state === 'Revisión Calidad');
+    else if (filter === 'backlog')    list = list.filter(i => i.state === 'Backlog');
     else if (filter === 'done')       list = list.filter(i => i.state === 'Done');
-    else                              list = list.filter(i => i.state !== 'Backlog');
     return list.sort((a, b) => urgencyScore(a) - urgencyScore(b));
   }, [items, filter]);
 
