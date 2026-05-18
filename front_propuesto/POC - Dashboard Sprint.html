@@ -616,6 +616,57 @@ function ThroughputCard({ data }) {
   );
 }
 
+// ── PERSON FILTER ─────────────────────────────────────────────────────────────
+function PersonFilter({ allNames, selected, onChange }) {
+  const allSelected = selected.size === allNames.length;
+
+  function toggle(name) {
+    const next = new Set(selected);
+    if (next.has(name)) {
+      if (next.size === 1) return; // keep at least one selected
+      next.delete(name);
+    } else {
+      next.add(name);
+    }
+    onChange(next);
+  }
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+      <span style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, flexShrink:0 }}>Persona</span>
+      <button
+        onClick={() => onChange(new Set(allNames))}
+        style={{
+          fontSize:11, fontWeight:600, padding:"5px 11px", borderRadius:6,
+          border:"1px solid",
+          borderColor: allSelected ? C.navy : C.border,
+          background:  allSelected ? C.navy : "transparent",
+          color:       allSelected ? "#fff" : C.muted,
+          cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
+        }}>
+        Todos
+      </button>
+      {allNames.map((name, idx) => {
+        const active = selected.has(name);
+        const color  = personColor(name, idx);
+        return (
+          <button key={name} onClick={() => toggle(name)} style={{
+            display:"flex", alignItems:"center", gap:5,
+            fontSize:11, fontWeight:600, padding:"4px 10px 4px 4px", borderRadius:20,
+            border:`1.5px solid ${active ? color : C.border}`,
+            background: active ? `${color}15` : "transparent",
+            color: active ? color : C.muted,
+            cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
+          }}>
+            <Avatar name={name} idx={idx} size={20} />
+            {name.split(" ")[0]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── PILL ──────────────────────────────────────────────────────────────────────
 const STATE_STYLE = {
   "Done":             { bg:"#EBF5F0", color:"#0D5232", label:"Done" },
@@ -756,20 +807,29 @@ function App() {
   const [showModal, setShowModal] = useState(false);
   const [context, setContext] = useState({ proyecto:MOCK_SPRINT_INFO.proyecto, equipo:MOCK_SPRINT_INFO.equipo, sprint:MOCK_SPRINT_INFO.sprint });
 
-  const info      = { ...MOCK_SPRINT_INFO, ...context };
-  const items     = MOCK_ITEMS;
-  const stats     = useMemo(() => computeStats(items), []);
-  const dayPct    = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
-  const restantes = daysUntilEnd(MOCK_SPRINT_INFO.fin);
-  const todayStr  = TODAY.toLocaleDateString("es-EC", { day:"2-digit", month:"long", year:"numeric" });
-  const team      = useMemo(() => computeTeam(items), []);
-  const overloaded = team.filter(p => p.overCapacity).length;
+  const allPersonNames = useMemo(() => [...new Set(MOCK_ITEMS.map(i => i.assignedTo))].sort(), []);
+  const [selectedPersons, setSelectedPersons] = useState(() => new Set(allPersonNames));
+
+  const info          = { ...MOCK_SPRINT_INFO, ...context };
+  const allItems      = MOCK_ITEMS;
+  const filteredItems = useMemo(() => allItems.filter(i => selectedPersons.has(i.assignedTo)), [selectedPersons]);
+  const stats         = useMemo(() => computeStats(filteredItems), [filteredItems]);
+  const dayPct        = sprintDayProgress(MOCK_SPRINT_INFO.inicio, MOCK_SPRINT_INFO.fin);
+  const restantes     = daysUntilEnd(MOCK_SPRINT_INFO.fin);
+  const todayStr      = TODAY.toLocaleDateString("es-EC", { day:"2-digit", month:"long", year:"numeric" });
+  const team          = useMemo(() => computeTeam(filteredItems), [filteredItems]);
+  const overloaded    = team.filter(p => p.overCapacity).length;
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg }}>
       <Header info={info} onRefresh={()=>{}} onChangeProject={()=>setShowModal(true)} />
 
       <div style={{ maxWidth:1280, margin:"0 auto", padding:"28px 36px 40px", display:"flex", flexDirection:"column", gap:18 }}>
+
+        {/* Filtro por persona */}
+        <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 20px" }}>
+          <PersonFilter allNames={allPersonNames} selected={selectedPersons} onChange={setSelectedPersons} />
+        </div>
 
         {/* KPIs */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
@@ -783,14 +843,14 @@ function App() {
         {/* Fila 1: Esfuerzo + BAU/Change + Team (carga por persona) */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.2fr", gap:14, alignItems:"stretch" }}>
           <EsfuerzoCard stats={stats} />
-          <BauChangeCard items={items} />
-          <TeamGrid items={items} />
+          <BauChangeCard items={filteredItems} />
+          <TeamGrid items={filteredItems} />
         </div>
 
         {/* Fila 2: Throughput a ancho completo */}
         <ThroughputCard data={MOCK_THROUGHPUT} />
 
-        <ItemsTable items={items} />
+        <ItemsTable items={filteredItems} />
 
         <div style={{ fontSize:11, color:C.faint, textAlign:"center" }}>
           {info.proyecto} · {info.equipo} · Banco Guayaquil · Datos de demostración · {todayStr}
