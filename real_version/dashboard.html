@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Sprint · Banco Guayaquil</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; background: #F0F2F5; color: #0B1D3A; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+  #root { min-height: 100vh; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #C8CEDA; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ── PALETTE ───────────────────────────────────────────────────────────────────
+const C = {
+  navy:        "#0B1D3A",
+  navyDeep:    "#060F1F",
+  navyMid:     "#162B52",
+  navyLight:   "#E8EDF5",
+  magenta:     "#C4186A",
+  magentaDark: "#A01257",
+  magentaLight:"#FAEBF2",
+  white:       "#FFFFFF",
+  bg:          "#F0F2F5",
+  border:      "#DDE1EB",
+  borderLight: "#EEF0F5",
+  text:        "#0B1D3A",
+  muted:       "#6B7A99",
+  faint:       "#B0BAD0",
+  red:         "#D63B3B", redBg:   "#FDF0F0",
+  amber:       "#C47B0E", amberBg: "#FDF5E6",
+  green:       "#1B8C55", greenBg: "#EAF5EF",
+};
+const GRAD_MAIN = `linear-gradient(125deg, ${C.navyDeep} 0%, ${C.navyMid} 55%, ${C.magentaDark} 100%)`;
+
+// ── CONFIG PARSING ────────────────────────────────────────────────────────────
+function parseConfig(txt) {
+  const cfg = {};
+  txt.split('\n').forEach(line => {
+    line = line.trim();
+    if (!line || line.startsWith('#')) return;
+    const idx = line.indexOf('=');
+    if (idx < 0) return;
+    cfg[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
+  });
+  if (!cfg.PAT || cfg.PAT === 'pega_tu_pat_aqui') throw new Error('Edita config.txt y reemplaza el PAT con tu token real.');
+  if (!cfg.PROYECTOS) throw new Error('Falta la línea PROYECTOS= en config.txt');
+  return cfg;
+}
+
+function saveMemory(ctx) {
+  localStorage.setItem('db_proyecto', ctx.proyecto);
+  localStorage.setItem('db_equipo', ctx.equipo);
+  localStorage.setItem('db_sprint', ctx.sprintPath);
+  localStorage.setItem('db_sprint_label', ctx.sprintLabel);
+}
+function loadMemory() {
+  return {
+    proyecto:    localStorage.getItem('db_proyecto') || '',
+    equipo:      localStorage.getItem('db_equipo') || '',
+    sprintPath:  localStorage.getItem('db_sprint') || '',
+    sprintLabel: localStorage.getItem('db_sprint_label') || '',
+  };
+}
+
+// ── ADO API ───────────────────────────────────────────────────────────────────
+let _cfg = {};
+
+function hdrs() {
+  return { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Content-Type': 'application/json' };
+}
+function getTipos() {
+  return (_cfg.TIPOS_ITEM || 'User Story,Tech Task,Spike').split(',').map(t => t.trim()).filter(Boolean);
+}
+function getAreaField() {
+  return _cfg.AREA_FIELD === 'tribu' ? 'Custom.Tribu' : 'Custom.Departamento';
+}
+
+async function adoFetch(url, opts = {}) {
+  const r = await fetch(url, { headers: hdrs(), ...opts });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`ADO ${r.status} → ${url.split('?')[0].split('/').slice(-2).join('/')}: ${body.substring(0, 120)}`);
+  }
+  return r.json();
+}
+
+async function fetchIterations(project, team) {
+  const data = await adoFetch(
+    `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?api-version=7.1`
+  );
+  return data.value || [];
+}
+
+async function wiqlIds(project, areaPath, sprintPath) {
+  const tipos = getTipos().map(t => `'${t}'`).join(',');
+  const sprintClause = sprintPath ? `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'` : '';
+  const body = {
+    query: `SELECT [System.Id] FROM WorkItems
+            WHERE [System.TeamProject] = '${project}'
+              AND [System.AreaPath] UNDER '${areaPath}'
+              AND [System.WorkItemType] IN (${tipos})
+              AND [System.State] <> 'Removed'
+              ${sprintClause}
+            ORDER BY [System.ChangedDate] DESC`
+  };
+  const data = await adoFetch(
+    `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+  return (data.workItems || []).map(w => w.id);
+}
+
+async function fetchItemsByIds(project, ids) {
+  if (!ids.length) return [];
+  const fields = [
+    'System.Title', 'System.State', 'System.AssignedTo', 'System.WorkItemType',
+    'Microsoft.VSTS.Scheduling.StoryPoints',
+    'Microsoft.VSTS.Scheduling.DueDate',
+    'Microsoft.VSTS.Scheduling.FinishDate',
+    'Custom.Tribu', 'Custom.Departamento',
+  ].join(',');
+  let all = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const data = await adoFetch(
+      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${chunk.join(',')}&fields=${fields}&api-version=7.1`
+    );
+    all = all.concat(data.value || []);
+  }
+  return all;
+}
+
+function parseItem(raw) {
+  const f = raw.fields;
+  const a = f['System.AssignedTo'];
+  const assignedTo = a
+    ? (typeof a === 'object' ? (a.displayName || a.uniqueName || 'Sin asignar') : String(a))
+    : 'Sin asignar';
+  const areaField = getAreaField();
+  return {
+    id:         raw.id,
+    title:      f['System.Title'] || '(sin título)',
+    state:      f['System.State'] || 'Backlog',
+    assignedTo,
+    sp:         f['Microsoft.VSTS.Scheduling.StoryPoints'] || 0,
+    due:        f['Microsoft.VSTS.Scheduling.DueDate']   ? f['Microsoft.VSTS.Scheduling.DueDate'].substring(0, 10)   : null,
+    finishDate: f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
+    tipo:       f['System.WorkItemType'] || 'User Story',
+    area:       f[areaField] || f['Custom.Departamento'] || f['Custom.Tribu'] || '',
+  };
+}
+
+// Throughput for a single past sprint: count Done items + sum SP
+async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName) {
+  try {
+    const tipos = getTipos().map(t => `'${t}'`).join(',');
+    const body = {
+      query: `SELECT [System.Id] FROM WorkItems
+              WHERE [System.TeamProject] = '${project}'
+                AND [System.AreaPath] UNDER '${areaPath}'
+                AND [System.WorkItemType] IN (${tipos})
+                AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'
+                AND [System.State] = 'Done'`
+    };
+    const data = await adoFetch(
+      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+      { method: 'POST', body: JSON.stringify(body) }
+    );
+    const ids = (data.workItems || []).map(w => w.id);
+    if (!ids.length) return { sprint: sprintName, hu: 0, sp: 0, current: false };
+    const chunk = ids.slice(0, 200);
+    const itemData = await adoFetch(
+      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${chunk.join(',')}&fields=Microsoft.VSTS.Scheduling.StoryPoints&api-version=7.1`
+    );
+    const sp = (itemData.value || []).reduce((s, i) => s + (i.fields['Microsoft.VSTS.Scheduling.StoryPoints'] || 0), 0);
+    return { sprint: sprintName, hu: ids.length, sp, current: false };
+  } catch (_) {
+    return { sprint: sprintName, hu: 0, sp: 0, current: false };
+  }
+}
+
+// ── COMPUTE ───────────────────────────────────────────────────────────────────
+const IN_PROGRESS = ['Doing', 'Entendimiento'];
+
+function computeStats(items) {
+  const committed   = items.filter(i => !['Backlog', 'Removed'].includes(i.state));
+  const done        = items.filter(i => i.state === 'Done');
+  const blocked     = items.filter(i => i.state === 'Bloqueado');
+  const doing       = items.filter(i => i.state === 'Doing');
+  const entend      = items.filter(i => i.state === 'Entendimiento');
+  const review      = items.filter(i => i.state === 'Revisión Calidad');
+  const backlog     = items.filter(i => i.state === 'Backlog');
+  const sum         = arr => arr.reduce((s, i) => s + (i.sp || 0), 0);
+  const spTotal     = sum(committed);
+  const spDone      = sum(done);
+  const spDoing     = sum(doing);
+  const spEntend    = sum(entend);
+  const spReview    = sum(review);
+  const spBlocked   = sum(blocked);
+  const spBacklog   = sum(backlog);
+  const pctItems    = committed.length ? Math.round(done.length / committed.length * 100) : 0;
+  const pctSP       = spTotal ? Math.round(spDone / spTotal * 100) : 0;
+  const atrasados   = committed.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
+  return { committed, done, blocked, doing, entend, review, backlog,
+           spTotal, spDone, spDoing, spEntend, spReview, spBlocked, spBacklog,
+           pctItems, pctSP, atrasados };
+}
+
+function computeTeam(items, capacity) {
+  const m = {};
+  items.forEach(item => {
+    const n = item.assignedTo;
+    if (!m[n]) m[n] = { name: n, items: [], spTotal: 0, spDone: 0, spDoing: 0 };
+    m[n].items.push(item);
+    m[n].spTotal += (item.sp || 0);
+    if (item.state === 'Done') m[n].spDone += (item.sp || 0);
+    if (IN_PROGRESS.includes(item.state)) m[n].spDoing += (item.sp || 0);
+  });
+  return Object.values(m).map(p => ({
+    ...p, capacity,
+    pctCapacity:  capacity > 0 ? Math.round(p.spDoing / capacity * 100) : 0,
+    overCapacity: p.spDoing > capacity,
+    nearCapacity: p.spDoing > 0 && p.spDoing <= capacity && p.spDoing / capacity >= 0.8,
+  })).sort((a, b) => b.spDoing - a.spDoing);
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+const TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+
+function initials(n) {
+  if (!n) return '?';
+  const p = n.split(' ').filter(Boolean);
+  return p.length >= 2 ? (p[0][0] + p[p.length - 1][0]).toUpperCase() : n.substring(0, 2).toUpperCase();
+}
+function diasAtraso(due, state) {
+  if (!due || state === 'Done') return null;
+  return Math.floor((TODAY.getTime() - new Date(due).setHours(0, 0, 0, 0)) / 86400000);
+}
+function sprintDayProgress(inicio, fin) {
+  const s = new Date(inicio), e = new Date(fin);
+  const total = (e - s) / 86400000;
+  const elapsed = Math.min(Math.max((TODAY - s) / 86400000, 0), total);
+  return Math.round(elapsed / total * 100);
+}
+function daysUntilEnd(fin) {
+  return Math.max(0, Math.round((new Date(fin) - TODAY) / 86400000));
+}
+function formatShortDate(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString('es-EC', { day: '2-digit', month: 'short' });
+}
+function urgencyScore(item) {
+  const d = diasAtraso(item.due, item.state);
+  if (item.state === 'Bloqueado') return 0;
+  if (d && d > 3) return 1;
+  if (d && d > 0) return 2;
+  if (item.state === 'Doing') return 3;
+  if (item.state === 'Entendimiento') return 3.5;
+  if (item.state === 'Revisión Calidad') return 4;
+  if (item.state === 'Backlog') return 5;
+  if (item.state === 'Done') return 99;
+  return 6;
+}
+
+const PERSON_COLORS = ["#0B4DB5","#8B1A6B","#1B6E5E","#7B3FB5","#B54A00","#005C80","#6B4A00","#3A6B00","#7B2000","#005C5C"];
+const PERSON_COLOR_MAP = {};
+function personColor(name, idx) {
+  if (!PERSON_COLOR_MAP[name]) {
+    PERSON_COLOR_MAP[name] = PERSON_COLORS[Object.keys(PERSON_COLOR_MAP).length % PERSON_COLORS.length];
+  }
+  return PERSON_COLOR_MAP[name];
+}
+
+// ── ICON ──────────────────────────────────────────────────────────────────────
+function Icon({ name, size = 16, color = 'currentColor', strokeWidth = 1.75 }) {
+  const paths = {
+    check:    "M4 13l5 5L20 7",
+    clock:    "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-6v-4m0-4h.01",
+    users:    "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2m22 0v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
+    layers:   "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+    refresh:  "M23 4v6h-6M1 20v-6h6m15.364-4A9 9 0 006.22 5.22M2.636 14A9 9 0 0017.78 18.78",
+    chevron:  "M9 18l6-6-6-6",
+    lock:     "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
+    trending: "M23 6l-9.5 9.5-5-5L1 18",
+    zap:      "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+    bar:      "M18 20V10M12 20V4M6 20v-6",
+    alert:    "M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d={paths[name] || ""}></path>
+    </svg>
+  );
+}
+
+// ── AVATAR ────────────────────────────────────────────────────────────────────
+function Avatar({ name, size = 32 }) {
+  const color = personColor(name);
+  return (
+    <div style={{ width: size, height: size, borderRadius: '50%', background: `${color}18`, border: `1.5px solid ${color}40`, color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.33, fontWeight: 700, flexShrink: 0 }}>
+      {initials(name)}
+    </div>
+  );
+}
+
+// ── DUE DATE CELL ─────────────────────────────────────────────────────────────
+function DueDateCell({ due, state }) {
+  if (!due) return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
+  const dias = diasAtraso(due, state);
+  const dateStr = formatShortDate(due);
+  if (state === 'Done') return <span style={{ fontSize: 12, color: C.green }}>{dateStr}</span>;
+  if (dias > 0) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: C.red }}>{dateStr}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.red }}>+{dias}d</span>
+    </div>
+  );
+  if (dias === 0) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: C.amber }}>{dateStr}</span>
+      <span style={{ fontSize: 10, fontWeight: 600, color: C.amber }}>hoy</span>
+    </div>
+  );
+  const faltan = Math.abs(dias);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 12, color: C.muted }}>{dateStr}</span>
+      <span style={{ fontSize: 10, color: C.faint }}>{faltan === 1 ? 'mañana' : `${faltan}d`}</span>
+    </div>
+  );
+}
+
+// ── PILL ──────────────────────────────────────────────────────────────────────
+const STATE_STYLE = {
+  'Done':             { bg: '#EBF5F0', color: '#0D5232',  label: 'Done' },
+  'Doing':            { bg: '#EBF0FA', color: '#0B3F8A',  label: 'Doing' },
+  'Entendimiento':    { bg: '#E6F4F1', color: '#0E5E4A',  label: 'Entendimiento' },
+  'Revisión Calidad': { bg: '#F0EDF9', color: '#5A3A99',  label: 'En revisión' },
+  'Bloqueado':        { bg: C.redBg,   color: C.red,      label: 'Bloqueado' },
+  'Backlog':          { bg: '#F2F3F5', color: C.muted,    label: 'Backlog' },
+};
+function Pill({ state }) {
+  const s = STATE_STYLE[state] || STATE_STYLE['Backlog'];
+  return <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 4, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>{s.label}</span>;
+}
+
+// ── KPI CARD ──────────────────────────────────────────────────────────────────
+function KpiCard({ label, value, valueColor, sub, icon, iconColor }) {
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted }}>{label}</span>
+        {icon && <Icon name={icon} size={15} color={iconColor || C.faint} />}
+      </div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: valueColor || C.navy, lineHeight: 1, marginBottom: 6 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: C.muted }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ── ESFUERZO CARD ─────────────────────────────────────────────────────────────
+function EsfuerzoCard({ stats }) {
+  const { spDone, spDoing, spEntend, spReview, spBlocked, spBacklog, spTotal } = stats;
+  const segs = [
+    { label: 'Entregado',      sp: spDone,   color: C.magenta },
+    { label: 'En progreso',    sp: spDoing,  color: '#3A6BB5' },
+    { label: 'Entendimiento',  sp: spEntend, color: '#2E8B6A' },
+    { label: 'En revisión',    sp: spReview, color: '#7B5EA7' },
+    { label: 'Bloqueado',      sp: spBlocked,color: C.red },
+    { label: 'Pendiente',      sp: spBacklog,color: C.faint },
+  ].filter(s => s.sp > 0);
+
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Esfuerzo comprometido</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Story Points por estado</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{ fontSize: 52, fontWeight: 800, color: C.magenta, lineHeight: 1 }}>{spDone}</span>
+        <div>
+          <span style={{ fontSize: 18, fontWeight: 600, color: C.faint }}>/ {spTotal} SP</span>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Story points entregados</div>
+        </div>
+      </div>
+      <div>
+        <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', gap: 2 }}>
+          {segs.map((s, i) => (
+            <div key={i} title={`${s.label}: ${s.sp} SP`} style={{ flex: s.sp, background: s.color, minWidth: 4, borderRadius: i === 0 ? '5px 0 0 5px' : i === segs.length - 1 ? '0 5px 5px 0' : 0 }}></div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginTop: 12 }}>
+          {segs.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flexShrink: 0 }}></div>
+              <span style={{ fontSize: 11, color: C.muted }}>{s.label}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{s.sp} SP</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── TEAM GRID ─────────────────────────────────────────────────────────────────
+function TeamGrid({ items, spCapacity }) {
+  const team = computeTeam(items, spCapacity);
+  const overloaded = team.filter(p => p.overCapacity).length;
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0, gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Carga por persona</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>SP en curso vs capacidad ({spCapacity})</div>
+        </div>
+        {overloaded > 0
+          ? <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, background: C.redBg, color: C.red, whiteSpace: 'nowrap' }}>{overloaded} SOBRECARGAD{overloaded > 1 ? 'OS' : 'O'}</span>
+          : <Icon name="users" size={16} color={C.faint} />}
+      </div>
+      {team.length === 0 && (
+        <div style={{ fontSize: 13, color: C.faint, textAlign: 'center', padding: '20px 0' }}>Sin datos de personas</div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap: 6, overflowY: 'auto', paddingRight: 2 }}>
+        {team.map((p, idx) => {
+          const color = personColor(p.name);
+          const isBlocked = p.items.some(i => i.state === 'Bloqueado');
+          const firstName = p.name.split(' ')[0];
+          const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
+          const rowBg     = p.overCapacity ? C.redBg : C.bg;
+          const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
+          const barFill   = Math.min(p.pctCapacity, 100);
+          const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+          return (
+            <div key={p.name}
+              title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: rowBg, border: `1px solid ${rowBorder}`, minWidth: 0 }}>
+              <Avatar name={p.name} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
+                  <span style={{ fontWeight: 600, fontSize: 12, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{firstName}</span>
+                  {isBlocked && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: C.redBg, color: C.red, flexShrink: 0 }}>BLOQ</span>}
+                  <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {p.spDoing}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.capacity}</span>
+                    <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 2 }}>SP</span>
+                  </span>
+                </div>
+                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden', position: 'relative' }}>
+                  <div style={{ width: `${barFill}%`, height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
+                  {p.overCapacity && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents: 'none' }}></div>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── THROUGHPUT CARD ───────────────────────────────────────────────────────────
+function ThroughputCard({ data }) {
+  const [view, setView] = useState('hu');
+  if (!data.length) return null;
+  const past    = data.filter(d => !d.current);
+  const current = data.find(d => d.current);
+  const vals    = past.map(d => view === 'hu' ? d.hu : d.sp);
+  const maxVal  = Math.max(...data.map(d => view === 'hu' ? d.hu : d.sp), 1);
+  const avgPast = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+  const lastVal = past.length ? vals[vals.length - 1] : 0;
+  const trend   = lastVal > avgPast ? { sym: '↑', color: C.green,  txt: 'sobre promedio' }
+                : lastVal < avgPast ? { sym: '↓', color: C.amber,  txt: 'bajo promedio' }
+                :                    { sym: '→', color: C.muted,  txt: 'estable' };
+  const CHART_H = 150;
+
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Throughput histórico</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{view === 'hu' ? 'HU' : 'Story Points'} completados por sprint</div>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[{ id: 'hu', label: 'HU' }, { id: 'sp', label: 'SP' }].map(t => (
+            <button key={t.id} onClick={() => setView(t.id)} style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid', borderColor: view === t.id ? C.navy : C.border, background: view === t.id ? C.navy : 'transparent', color: view === t.id ? '#fff' : C.muted, cursor: 'pointer', fontFamily: 'inherit' }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1, background: C.bg, borderRadius: 8, padding: '10px 14px' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.muted, marginBottom: 2 }}>Promedio {past.length} sprints</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.navy }}>{avgPast} <span style={{ fontSize: 11, color: C.faint, fontWeight: 500 }}>{view === 'hu' ? 'HU' : 'SP'}</span></div>
+        </div>
+        <div style={{ flex: 1, background: C.bg, borderRadius: 8, padding: '10px 14px' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: C.muted, marginBottom: 2 }}>Sprint actual</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 800, color: C.magenta }}>{view === 'hu' ? current?.hu : current?.sp}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: trend.color }}>{trend.sym}</span>
+            <span style={{ fontSize: 10, color: trend.color, fontWeight: 600 }}>{trend.txt}</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minHeight: CHART_H + 50 }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 10, height: CHART_H, marginBottom: 6 }}>
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: Math.round(avgPast / maxVal * CHART_H), pointerEvents: 'none', zIndex: 1 }}>
+            <div style={{ borderTop: `1px dashed ${C.amber}`, opacity: 0.7 }}></div>
+            <span style={{ position: 'absolute', right: 0, top: -13, fontSize: 9, fontWeight: 700, color: C.amber, background: '#fff', padding: '0 4px' }}>avg {avgPast}</span>
+          </div>
+          {data.map((d, i) => {
+            const val = view === 'hu' ? d.hu : d.sp;
+            const h   = Math.max(Math.round(val / maxVal * CHART_H), 4);
+            return (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 4, height: '100%', position: 'relative' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy }}>{val}</span>
+                <div title={`${d.sprint}: ${val} ${view === 'hu' ? 'HU' : 'SP'}`} style={{
+                  width: '82%', height: h, borderRadius: '4px 4px 0 0',
+                  background: d.current
+                    ? `linear-gradient(180deg, ${C.magenta} 0%, ${C.magentaDark} 100%)`
+                    : `linear-gradient(180deg, #A8B3CC 0%, #7C8AAB 100%)`,
+                  boxShadow: d.current ? `0 2px 8px rgba(196,24,106,0.25)` : 'none',
+                }}></div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {data.map((d, i) => (
+            <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: d.current ? 700 : 500, color: d.current ? C.magenta : C.muted, whiteSpace: 'nowrap' }}>{d.sprint}{d.current ? ' •' : ''}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ITEMS TABLE ───────────────────────────────────────────────────────────────
+function ItemsTable({ items }) {
+  const [filter, setFilter] = useState('todos');
+  const [page, setPage]     = useState(1);
+  const PAGE_SIZE = 8;
+
+  const tabs = [
+    { id: 'todos',      label: 'Todos',       count: items.filter(i => i.state !== 'Backlog').length },
+    { id: 'bloqueados', label: 'Bloqueados',  count: items.filter(i => i.state === 'Bloqueado').length },
+    { id: 'atrasados',  label: 'Atrasados',   count: items.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; }).length },
+    { id: 'doing',      label: 'En progreso', count: items.filter(i => IN_PROGRESS.includes(i.state)).length },
+    { id: 'revision',   label: 'En revisión', count: items.filter(i => i.state === 'Revisión Calidad').length },
+    { id: 'done',       label: 'Done',        count: items.filter(i => i.state === 'Done').length },
+  ];
+
+  const visible = useMemo(() => {
+    let list = [...items];
+    if      (filter === 'bloqueados') list = list.filter(i => i.state === 'Bloqueado');
+    else if (filter === 'atrasados')  list = list.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
+    else if (filter === 'doing')      list = list.filter(i => IN_PROGRESS.includes(i.state));
+    else if (filter === 'revision')   list = list.filter(i => i.state === 'Revisión Calidad');
+    else if (filter === 'done')       list = list.filter(i => i.state === 'Done');
+    else                              list = list.filter(i => i.state !== 'Backlog');
+    return list.sort((a, b) => urgencyScore(a) - urgencyScore(b));
+  }, [items, filter]);
+
+  const totalPages = Math.ceil(visible.length / PAGE_SIZE);
+  const paginated  = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  useEffect(() => setPage(1), [filter, items]);
+
+  const btnPage = active => ({
+    width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 6, border: `1px solid ${active ? C.navy : C.border}`,
+    background: active ? C.navy : '#fff', color: active ? '#fff' : C.muted,
+    fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+  });
+
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 20px 0', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: C.navy }}>Items del sprint</div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setFilter(t.id)} style={{
+                fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 5, border: '1px solid',
+                borderColor: filter === t.id ? C.navy : C.border, background: filter === t.id ? C.navy : 'transparent',
+                color: filter === t.id ? '#fff' : C.muted, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
+              }}>
+                {t.label}{t.count > 0 ? <span style={{ marginLeft: 4, opacity: 0.65 }}>{t.count}</span> : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {['Título', 'Responsable', 'Estado', 'Área', 'Due date', 'SP'].map((h, i) => (
+                <th key={i} style={{ fontSize: 10, fontWeight: 600, color: C.muted, textAlign: 'left', padding: '8px 16px', background: '#FAFBFD', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {paginated.length === 0 && (
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: C.faint, fontSize: 13 }}>Sin items en esta categoría</td></tr>
+            )}
+            {paginated.map(item => (
+              <tr key={item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}
+                onMouseEnter={e => e.currentTarget.style.background = '#FAFBFD'}
+                onMouseLeave={e => e.currentTarget.style.background = ''}>
+                <td style={{ padding: '0 16px', height: 46, maxWidth: 280 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {item.state === 'Bloqueado' && <div style={{ width: 3, height: 20, borderRadius: 2, background: C.red, flexShrink: 0 }}></div>}
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 13, color: C.navy }} title={item.title}>{item.title}</div>
+                  </div>
+                </td>
+                <td style={{ padding: '0 16px', height: 46 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <Avatar name={item.assignedTo} size={22} />
+                    <span style={{ fontSize: 12, color: C.muted }}>{item.assignedTo.split(' ')[0]}</span>
+                  </div>
+                </td>
+                <td style={{ padding: '0 16px', height: 46 }}><Pill state={item.state} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}>
+                  {item.area
+                    ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.bg, color: C.muted, border: `1px solid ${C.border}` }}>{item.area}</span>
+                    : <span style={{ color: C.faint }}>—</span>}
+                </td>
+                <td style={{ padding: '0 16px', height: 46 }}><DueDateCell due={item.due} state={item.state} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: item.state === 'Done' ? C.green : C.navy }}>{item.sp || '—'}</span>
+                  {item.sp > 0 && <span style={{ fontSize: 11, color: C.faint, marginLeft: 3 }}>SP</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: `1px solid ${C.borderLight}` }}>
+          <span style={{ fontSize: 12, color: C.muted }}>{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, visible.length)} de {visible.length} items</span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={{ ...btnPage(false), opacity: page === 1 ? 0.4 : 1 }}>‹</button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <button key={p} onClick={() => setPage(p)} style={btnPage(p === page)}>{p}</button>
+            ))}
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ ...btnPage(false), opacity: page === totalPages ? 0.4 : 1 }}>›</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PERSON DROPDOWN ───────────────────────────────────────────────────────────
+function PersonDropdown({ allNames, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const allSelected = selected.size === allNames.length && allNames.length > 0;
+  const label = allSelected || allNames.length === 0 ? 'Equipo completo' : `${selected.size} persona${selected.size !== 1 ? 's' : ''}`;
+
+  function toggle(name) {
+    const next = new Set(selected);
+    if (next.has(name)) { if (next.size === 1) return; next.delete(name); }
+    else next.add(name);
+    onChange(next);
+  }
+
+  return (
+    <div style={{ position: 'relative' }}
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}
+      tabIndex={-1}>
+      <button onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: 600 }}
+        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
+        <Icon name="users" size={13} color="rgba(255,255,255,0.7)" />
+        {label}
+        <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}><path d="M9 18l6-6-6-6" /></svg>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', zIndex: 300, background: '#fff', border: `1px solid ${C.border}`, borderRadius: 9, boxShadow: '0 8px 28px rgba(6,15,31,0.14)', minWidth: 220, overflow: 'hidden' }}>
+          <div tabIndex={0} onClick={() => onChange(new Set(allNames))}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 14px 9px', cursor: 'pointer', background: allSelected ? C.navyLight : 'transparent', borderBottom: `1px solid ${C.borderLight}` }}
+            onMouseEnter={e => e.currentTarget.style.background = C.navyLight}
+            onMouseLeave={e => e.currentTarget.style.background = allSelected ? C.navyLight : 'transparent'}>
+            <div style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${allSelected ? C.navy : C.border}`, background: allSelected ? C.navy : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              {allSelected && <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M4 13l5 5L20 7" /></svg>}
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>Todos</span>
+            <span style={{ fontSize: 11, color: C.muted, marginLeft: 'auto' }}>{allNames.length}</span>
+          </div>
+          {allNames.map(name => {
+            const active = selected.has(name);
+            const color  = personColor(name);
+            return (
+              <div key={name} tabIndex={0} onClick={() => toggle(name)}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 14px', cursor: 'pointer', background: active ? C.navyLight : 'transparent' }}
+                onMouseEnter={e => e.currentTarget.style.background = C.navyLight}
+                onMouseLeave={e => e.currentTarget.style.background = active ? C.navyLight : 'transparent'}>
+                <div style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${active ? color : C.border}`, background: active ? color : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {active && <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M4 13l5 5L20 7" /></svg>}
+                </div>
+                <Avatar name={name} size={22} />
+                <span style={{ fontSize: 12, fontWeight: 500, color: C.navy }}>{name}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── HEADER ────────────────────────────────────────────────────────────────────
+function Header({ info, onRefresh, onChangeProject, personFilter }) {
+  return (
+    <div style={{ background: C.navy, color: '#fff', padding: '0 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52, gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 6, background: GRAD_MAIN, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="trending" size={13} color="#fff" strokeWidth={2.5} />
+        </div>
+        <span style={{ fontWeight: 800, fontSize: 12, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#fff' }}>Banco Guayaquil</span>
+        <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.15)' }}></div>
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>Dashboard Sprint</span>
+      </div>
+
+      <button onClick={onChangeProject} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>{info.proyecto}</span>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)' }}>›</span>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{info.equipo}</span>
+        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)' }}>›</span>
+        <span style={{ fontSize: 12, color: '#fff', fontWeight: 700 }}>{info.sprint || '—'}</span>
+        <Icon name="chevron" size={12} color="rgba(255,255,255,0.4)" strokeWidth={2} />
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {personFilter}
+        <button onClick={onRefresh} title="Actualizar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', flexShrink: 0 }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
+          <Icon name="refresh" size={14} color="rgba(255,255,255,0.7)" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── CONTEXT MODAL (real ADO sprints) ──────────────────────────────────────────
+function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
+  const [proyecto,     setProyecto]     = useState(context?.proyecto || '');
+  const [equipo,       setEquipo]       = useState(context?.equipo || '');
+  const [sprints,      setSprints]      = useState([]);
+  const [sprintPath,   setSprintPath]   = useState(context?.sprintPath || '');
+  const [loadingSpr,   setLoadingSpr]   = useState(false);
+  const [errSpr,       setErrSpr]       = useState('');
+
+  const proyectos = cfg ? cfg.PROYECTOS.split(',').map(p => p.trim()).filter(Boolean) : [];
+  const equipos   = cfg ? (cfg['EQUIPOS_' + proyecto] || '').split(',').map(e => e.trim()).filter(Boolean) : [];
+
+  useEffect(() => {
+    if (proyecto && equipo) loadSprints();
+  }, [proyecto, equipo]);
+
+  async function loadSprints() {
+    setLoadingSpr(true); setErrSpr(''); setSprints([]); setSprintPath('');
+    try {
+      const r = await fetch(
+        `https://dev.azure.com/${cfg.ORG}/${encodeURIComponent(proyecto)}/${encodeURIComponent(equipo)}/_apis/work/teamsettings/iterations?api-version=7.1`,
+        { headers: { 'Authorization': 'Basic ' + btoa(':' + cfg.PAT), 'Content-Type': 'application/json' } }
+      );
+      if (!r.ok) throw new Error(`Error ${r.status} al cargar sprints`);
+      const data = await r.json();
+      const its = (data.value || []).slice().reverse();
+      setSprints(its);
+      const current = its.find(it => it.attributes?.timeFrame === 'current');
+      if (current) setSprintPath(current.path);
+      else if (its.length) setSprintPath(its[0].path);
+    } catch(e) {
+      setErrSpr(e.message);
+    } finally {
+      setLoadingSpr(false);
+    }
+  }
+
+  const selectedSprint = sprints.find(it => it.path === sprintPath);
+  const canApply = proyecto && equipo && sprints.length > 0 && sprintPath;
+
+  function apply() {
+    const sprintLabel = selectedSprint?.name || sprintPath.split('\\').pop() || '';
+    onApply({ proyecto, equipo, sprintPath, sprintLabel });
+  }
+
+  const inputStyle = { width: '100%', padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'inherit', color: C.navy, background: '#FAFBFD', outline: 'none' };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 5 };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(6,15,31,0.55)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: '28px 28px 24px', width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontWeight: 800, fontSize: 16, color: C.navy, marginBottom: 4 }}>Seleccionar contexto</div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 20 }}>Proyecto → Equipo → Sprint</div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Proyecto</label>
+          <select value={proyecto} onChange={e => { setProyecto(e.target.value); setEquipo(''); setSprints([]); setSprintPath(''); }} style={inputStyle}>
+            <option value="">— Selecciona —</option>
+            {proyectos.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+
+        {proyecto && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Equipo</label>
+            <select value={equipo} onChange={e => { setEquipo(e.target.value); setSprints([]); setSprintPath(''); }} style={inputStyle}>
+              <option value="">— Selecciona —</option>
+              {equipos.map(eq => <option key={eq} value={eq}>{eq}</option>)}
+            </select>
+          </div>
+        )}
+
+        {equipo && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Sprint</label>
+            {loadingSpr ? (
+              <div style={{ fontSize: 12, color: C.muted, padding: '8px 0' }}>Cargando sprints desde Azure DevOps...</div>
+            ) : errSpr ? (
+              <div style={{ fontSize: 12, color: C.red, padding: '8px 0' }}>{errSpr}</div>
+            ) : sprints.length > 0 ? (
+              <select value={sprintPath} onChange={e => setSprintPath(e.target.value)} style={inputStyle}>
+                {sprints.map(it => (
+                  <option key={it.path} value={it.path}>
+                    {it.name}{it.attributes?.timeFrame === 'current' ? ' ✓ activo' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          {!isFirst && (
+            <button onClick={onClose} style={{ padding: '9px 18px', fontSize: 13, fontWeight: 600, border: `1px solid ${C.border}`, borderRadius: 7, background: '#fff', color: C.muted, cursor: 'pointer', fontFamily: 'inherit' }}>Cancelar</button>
+          )}
+          <button disabled={!canApply} onClick={apply}
+            style={{ flex: 1, padding: '9px 18px', fontSize: 13, fontWeight: 700, border: 'none', borderRadius: 7, background: canApply ? C.navy : C.faint, color: '#fff', cursor: canApply ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+            Ver dashboard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── LOADING / ERROR ───────────────────────────────────────────────────────────
+function LoadingScreen({ message }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: C.bg }}>
+      <div style={{ width: 26, height: 26, borderRadius: 6, background: GRAD_MAIN, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Icon name="trending" size={13} color="#fff" strokeWidth={2.5} />
+      </div>
+      <div style={{ fontWeight: 800, fontSize: 14, letterSpacing: '0.07em', textTransform: 'uppercase', color: C.navy }}>Banco Guayaquil</div>
+      <div style={{ fontSize: 13, color: C.muted }}>{message || 'Cargando...'}</div>
+      <div style={{ width: 28, height: 28, border: `3px solid ${C.border}`, borderTopColor: C.navy, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }}></div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  );
+}
+
+function ErrorScreen({ message, onRetry }) {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: C.bg, padding: 32 }}>
+      <Icon name="alert" size={32} color={C.red} />
+      <div style={{ fontWeight: 700, fontSize: 16, color: C.navy }}>Error al cargar</div>
+      <div style={{ fontSize: 13, color: C.muted, maxWidth: 480, textAlign: 'center', lineHeight: 1.6 }}>{message}</div>
+      {onRetry && (
+        <button onClick={onRetry} style={{ padding: '9px 22px', fontSize: 13, fontWeight: 700, border: 'none', borderRadius: 8, background: C.navy, color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}>Reintentar</button>
+      )}
+    </div>
+  );
+}
+
+// ── APP ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [phase,           setPhase]          = useState('booting');
+  const [cfg,             setCfg]            = useState(null);
+  const [context,         setContext]        = useState(null);
+  const [sprintInfo,      setSprintInfo]     = useState(null);
+  const [items,           setItems]          = useState([]);
+  const [throughput,      setThroughput]     = useState([]);
+  const [selectedPersons, setSelectedPersons] = useState(new Set());
+  const [errorMsg,        setErrorMsg]       = useState('');
+  const [loadingMsg,      setLoadingMsg]     = useState('Iniciando...');
+  const [showModal,       setShowModal]      = useState(false);
+
+  // Hooks must be unconditional
+  const spCapacity    = cfg ? (parseInt(cfg.SP_CAPACITY) || 13) : 13;
+  const allPersonNames = useMemo(() =>
+    [...new Set(items.map(i => i.assignedTo).filter(n => n !== 'Sin asignar'))].sort(),
+    [items]
+  );
+  const filteredItems = useMemo(() =>
+    selectedPersons.size > 0 ? items.filter(i => selectedPersons.has(i.assignedTo)) : items,
+    [items, selectedPersons]
+  );
+  const stats      = useMemo(() => computeStats(filteredItems), [filteredItems]);
+  const team       = useMemo(() => computeTeam(filteredItems, spCapacity), [filteredItems, spCapacity]);
+  const overloaded = team.filter(p => p.overCapacity).length;
+
+  // Boot: parse config.txt
+  useEffect(() => {
+    setLoadingMsg('Leyendo config.txt...');
+    fetch('config.txt')
+      .then(r => r.ok ? r.text() : Promise.reject('No se encontró config.txt junto al dashboard.'))
+      .then(txt => {
+        const c = parseConfig(txt);
+        _cfg = c;
+        setCfg(c);
+        const mem = loadMemory();
+        if (mem.proyecto && mem.equipo) {
+          setContext(mem);
+          setPhase('loading');
+        } else {
+          setPhase('modal');
+        }
+      })
+      .catch(e => { setErrorMsg(String(e)); setPhase('error'); });
+  }, []);
+
+  // Load data when context is set and phase = loading
+  useEffect(() => {
+    if (phase === 'loading' && cfg && context) loadData();
+  }, [phase, context]);
+
+  async function loadData() {
+    try {
+      setLoadingMsg('Cargando iteraciones...');
+      const areaPath = `${context.proyecto}\\${context.equipo}`;
+      const iterations = await fetchIterations(context.proyecto, context.equipo);
+      const currentIt  = iterations.find(it => it.attributes?.timeFrame === 'current');
+      const pastIts    = iterations.filter(it => it.attributes?.timeFrame === 'past');
+
+      // Resolve sprint path: use context or fall back to current sprint
+      const spPath  = context.sprintPath || currentIt?.path || '';
+      const spLabel = context.sprintLabel || currentIt?.name || 'Sprint actual';
+      const theIt   = iterations.find(it => it.path === spPath) || currentIt;
+
+      if (theIt?.attributes) {
+        setSprintInfo({
+          sprint:   theIt.name,
+          inicio:   theIt.attributes.startDate?.substring(0, 10) || null,
+          fin:      theIt.attributes.finishDate?.substring(0, 10) || null,
+          proyecto: context.proyecto,
+          equipo:   context.equipo,
+        });
+      }
+
+      // Fetch sprint items
+      setLoadingMsg('Cargando items del sprint...');
+      const ids = await wiqlIds(context.proyecto, areaPath, spPath);
+      const rawItems = ids.length ? await fetchItemsByIds(context.proyecto, ids) : [];
+      const parsed   = rawItems.map(raw => parseItem(raw));
+      setItems(parsed);
+
+      // Init person filter with all names
+      const names = [...new Set(parsed.map(i => i.assignedTo).filter(n => n !== 'Sin asignar'))].sort();
+      setSelectedPersons(new Set(names));
+
+      // Fetch throughput (parallel)
+      setLoadingMsg('Cargando throughput histórico...');
+      const N = parseInt(cfg.THROUGHPUT_SPRINTS) || 6;
+      const pastToFetch = pastIts.slice(-N);
+      const historico = await Promise.all(
+        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaPath, it.path, it.name))
+      );
+      const doneCurrent = parsed.filter(i => i.state === 'Done');
+      historico.push({
+        sprint:  theIt?.name || spLabel,
+        hu:      doneCurrent.length,
+        sp:      doneCurrent.reduce((s, i) => s + (i.sp || 0), 0),
+        current: true,
+      });
+      setThroughput(historico);
+
+      setPhase('ready');
+    } catch(e) {
+      setErrorMsg(String(e));
+      setPhase('error');
+    }
+  }
+
+  function handleRefresh() {
+    setPhase('loading');
+    setLoadingMsg('Actualizando datos...');
+  }
+
+  function handleApplyContext(ctx) {
+    saveMemory(ctx);
+    setContext(ctx);
+    setShowModal(false);
+    setItems([]);
+    setThroughput([]);
+    setSelectedPersons(new Set());
+    setPhase('loading');
+    setLoadingMsg('Cargando datos...');
+  }
+
+  // Phase renders
+  if (phase === 'booting' || phase === 'loading') return <LoadingScreen message={loadingMsg} />;
+  if (phase === 'error') return <ErrorScreen message={errorMsg} onRetry={() => { setErrorMsg(''); setPhase('loading'); }} />;
+  if (phase === 'modal') return (
+    <ContextModal cfg={cfg} context={context} isFirst={true} onApply={ctx => { saveMemory(ctx); setContext(ctx); setPhase('loading'); setLoadingMsg('Cargando datos...'); }} />
+  );
+
+  // Ready
+  const info = sprintInfo || { sprint: context?.sprintLabel || '—', proyecto: context?.proyecto || '', equipo: context?.equipo || '', inicio: null, fin: null };
+  const dayPct    = info.inicio && info.fin ? sprintDayProgress(info.inicio, info.fin) : 0;
+  const restantes = info.fin ? daysUntilEnd(info.fin) : '?';
+  const todayStr  = TODAY.toLocaleDateString('es-EC', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Header
+        info={info}
+        onRefresh={handleRefresh}
+        onChangeProject={() => setShowModal(true)}
+        personFilter={
+          <PersonDropdown
+            allNames={allPersonNames}
+            selected={selectedPersons}
+            onChange={setSelectedPersons}
+          />
+        }
+      />
+
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '28px 36px 40px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+        {/* KPIs */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 14 }}>
+          <KpiCard label="Tiempo del sprint"      value={`${dayPct}%`}                valueColor={dayPct > 80 ? C.amber : C.navy}  sub={`${restantes}d restantes · ${info.sprint}`}                              icon="clock"  iconColor={C.muted} />
+          <KpiCard label="% Compromiso cumplido"  value={`${stats.pctItems}%`}        valueColor={stats.pctItems >= 70 ? C.green : stats.pctItems >= 40 ? C.amber : C.navy}  sub={`${stats.done.length}/${stats.committed.length} tareas · ${stats.pctSP}% SP`}  icon="check"  iconColor={C.green} />
+          <KpiCard label="SP entregados"          value={`${stats.spDone} SP`}        valueColor={C.magenta}                       sub={`de ${stats.spTotal} comprometidos`}                                     icon="layers" iconColor={C.magenta} />
+          <KpiCard label="Sobrecargados"          value={overloaded}                  valueColor={overloaded > 0 ? C.red : C.faint} sub={`personas con SP en curso > ${spCapacity}`}                            icon="zap"    iconColor={overloaded > 0 ? C.red : C.faint} />
+          <KpiCard label="Bloqueados"             value={stats.blocked.length}        valueColor={stats.blocked.length > 0 ? C.red : C.faint} sub={`${stats.spBlocked} SP detenidos`}                          icon="lock"   iconColor={stats.blocked.length > 0 ? C.red : C.faint} />
+        </div>
+
+        {/* Esfuerzo SP + Carga por persona */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 14, alignItems: 'stretch' }}>
+          <EsfuerzoCard stats={stats} />
+          <TeamGrid items={filteredItems} spCapacity={spCapacity} />
+        </div>
+
+        {/* Throughput histórico */}
+        {throughput.length > 0 && <ThroughputCard data={throughput} />}
+
+        {/* Items del sprint */}
+        <ItemsTable items={filteredItems} />
+
+        <div style={{ fontSize: 11, color: C.faint, textAlign: 'center' }}>
+          {info.proyecto} · {info.equipo} · Banco Guayaquil · {todayStr}
+        </div>
+      </div>
+
+      {showModal && (
+        <ContextModal cfg={cfg} context={context} isFirst={false}
+          onApply={handleApplyContext}
+          onClose={() => setShowModal(false)} />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
