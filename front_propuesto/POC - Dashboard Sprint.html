@@ -231,7 +231,7 @@ function Icon({ name, size=16, color="currentColor", strokeWidth=1.75 }) {
 }
 
 // ── HEADER ────────────────────────────────────────────────────────────────────
-function Header({ info, onRefresh, onChangeProject }) {
+function Header({ info, onRefresh, onChangeProject, personFilter }) {
   return (
     <div style={{ background:C.navy, color:"#fff", padding:"0 28px", display:"flex", alignItems:"center", justifyContent:"space-between", height:52, gap:16 }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
@@ -255,11 +255,14 @@ function Header({ info, onRefresh, onChangeProject }) {
         <Icon name="chevron" size={12} color="rgba(255,255,255,0.4)" strokeWidth={2} />
       </button>
 
-      <button onClick={onRefresh} title="Actualizar" style={{ display:"flex", alignItems:"center", justifyContent:"center", width:32, height:32, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", flexShrink:0 }}
-        onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
-        onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
-        <Icon name="refresh" size={14} color="rgba(255,255,255,0.7)" />
-      </button>
+      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+        {personFilter}
+        <button onClick={onRefresh} title="Actualizar" style={{ display:"flex", alignItems:"center", justifyContent:"center", width:32, height:32, background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:7, cursor:"pointer", flexShrink:0 }}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.13)"}
+          onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
+          <Icon name="refresh" size={14} color="rgba(255,255,255,0.7)" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -616,14 +619,16 @@ function ThroughputCard({ data }) {
   );
 }
 
-// ── PERSON FILTER ─────────────────────────────────────────────────────────────
-function PersonFilter({ allNames, selected, onChange }) {
+// ── PERSON DROPDOWN ───────────────────────────────────────────────────────────
+function PersonDropdown({ allNames, selected, onChange }) {
+  const [open, setOpen] = useState(false);
   const allSelected = selected.size === allNames.length;
+  const label = allSelected ? "Equipo completo" : `${selected.size} persona${selected.size !== 1 ? "s" : ""}`;
 
   function toggle(name) {
     const next = new Set(selected);
     if (next.has(name)) {
-      if (next.size === 1) return; // keep at least one selected
+      if (next.size === 1) return;
       next.delete(name);
     } else {
       next.add(name);
@@ -631,38 +636,74 @@ function PersonFilter({ allNames, selected, onChange }) {
     onChange(next);
   }
 
+  const rowStyle = (active) => ({
+    display:"flex", alignItems:"center", gap:9, padding:"8px 14px",
+    cursor:"pointer", background: active ? C.navyLight : "transparent",
+    transition:"background 0.12s",
+  });
+
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-      <span style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:C.muted, flexShrink:0 }}>Persona</span>
-      <button
-        onClick={() => onChange(new Set(allNames))}
+    <div style={{ position:"relative" }}
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}
+      tabIndex={-1}>
+      <button onClick={() => setOpen(o => !o)}
         style={{
-          fontSize:11, fontWeight:600, padding:"5px 11px", borderRadius:6,
-          border:"1px solid",
-          borderColor: allSelected ? C.navy : C.border,
-          background:  allSelected ? C.navy : "transparent",
-          color:       allSelected ? "#fff" : C.muted,
-          cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
-        }}>
-        Todos
+          display:"flex", alignItems:"center", gap:7,
+          padding:"7px 12px", borderRadius:7, cursor:"pointer", fontFamily:"inherit",
+          background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+          color:"rgba(255,255,255,0.85)", fontSize:12, fontWeight:600,
+          transition:"background 0.15s",
+        }}
+        onMouseEnter={e => e.currentTarget.style.background="rgba(255,255,255,0.13)"}
+        onMouseLeave={e => e.currentTarget.style.background="rgba(255,255,255,0.07)"}>
+        <Icon name="users" size={13} color="rgba(255,255,255,0.7)" />
+        {label}
+        <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.2s" }}>
+          <path d="M9 18l6-6-6-6" />
+        </svg>
       </button>
-      {allNames.map((name, idx) => {
-        const active = selected.has(name);
-        const color  = personColor(name, idx);
-        return (
-          <button key={name} onClick={() => toggle(name)} style={{
-            display:"flex", alignItems:"center", gap:5,
-            fontSize:11, fontWeight:600, padding:"4px 10px 4px 4px", borderRadius:20,
-            border:`1.5px solid ${active ? color : C.border}`,
-            background: active ? `${color}15` : "transparent",
-            color: active ? color : C.muted,
-            cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s",
-          }}>
-            <Avatar name={name} idx={idx} size={20} />
-            {name.split(" ")[0]}
-          </button>
-        );
-      })}
+
+      {open && (
+        <div style={{
+          position:"absolute", right:0, top:"calc(100% + 8px)", zIndex:300,
+          background:"#fff", border:`1px solid ${C.border}`, borderRadius:9,
+          boxShadow:"0 8px 28px rgba(6,15,31,0.14)", minWidth:210, overflow:"hidden",
+        }}>
+          {/* Todos */}
+          <div tabIndex={0}
+            onClick={() => onChange(new Set(allNames))}
+            onKeyDown={e => e.key==="Enter" && onChange(new Set(allNames))}
+            style={{ ...rowStyle(allSelected), borderBottom:`1px solid ${C.borderLight}`, paddingTop:10, paddingBottom:10 }}
+            onMouseEnter={e => e.currentTarget.style.background=C.navyLight}
+            onMouseLeave={e => e.currentTarget.style.background=allSelected?C.navyLight:"transparent"}>
+            <div style={{ width:16, height:16, borderRadius:4, border:`1.5px solid ${allSelected?C.navy:C.border}`, background:allSelected?C.navy:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              {allSelected && <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M4 13l5 5L20 7"/></svg>}
+            </div>
+            <span style={{ fontSize:12, fontWeight:700, color:C.navy }}>Todos</span>
+            <span style={{ fontSize:11, color:C.muted, marginLeft:"auto" }}>{allNames.length}</span>
+          </div>
+          {/* Persons */}
+          {allNames.map((name, idx) => {
+            const active = selected.has(name);
+            const color  = personColor(name, idx);
+            return (
+              <div key={name} tabIndex={0}
+                onClick={() => toggle(name)}
+                onKeyDown={e => e.key==="Enter" && toggle(name)}
+                style={rowStyle(active)}
+                onMouseEnter={e => e.currentTarget.style.background=C.navyLight}
+                onMouseLeave={e => e.currentTarget.style.background=active?C.navyLight:"transparent"}>
+                <div style={{ width:16, height:16, borderRadius:4, border:`1.5px solid ${active?color:C.border}`, background:active?color:"transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  {active && <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"><path d="M4 13l5 5L20 7"/></svg>}
+                </div>
+                <Avatar name={name} idx={idx} size={22} />
+                <span style={{ fontSize:12, fontWeight:500, color:C.navy }}>{name}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -822,14 +863,10 @@ function App() {
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg }}>
-      <Header info={info} onRefresh={()=>{}} onChangeProject={()=>setShowModal(true)} />
+      <Header info={info} onRefresh={()=>{}} onChangeProject={()=>setShowModal(true)}
+        personFilter={<PersonDropdown allNames={allPersonNames} selected={selectedPersons} onChange={setSelectedPersons} />} />
 
       <div style={{ maxWidth:1280, margin:"0 auto", padding:"28px 36px 40px", display:"flex", flexDirection:"column", gap:18 }}>
-
-        {/* Filtro por persona */}
-        <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 20px" }}>
-          <PersonFilter allNames={allPersonNames} selected={selectedPersons} onChange={setSelectedPersons} />
-        </div>
 
         {/* KPIs */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14 }}>
