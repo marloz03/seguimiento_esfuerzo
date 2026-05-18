@@ -81,12 +81,8 @@ let _cfg = {};
 function hdrs() {
   return { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Content-Type': 'application/json' };
 }
-function getTipos() {
-  return (_cfg.TIPOS_ITEM || 'User Story,Tech Task,Spike').split(',').map(t => t.trim()).filter(Boolean);
-}
-function getAreaField() {
-  return _cfg.AREA_FIELD === 'tribu' ? 'Custom.Tribu' : 'Custom.Departamento';
-}
+const TIPOS_ITEM = ['User Story', 'Tech Task', 'Spike'];
+function getTipos() { return TIPOS_ITEM; }
 
 async function adoFetch(url, opts = {}) {
   const r = await fetch(url, { headers: hdrs(), ...opts });
@@ -149,7 +145,6 @@ function parseItem(raw) {
   const assignedTo = a
     ? (typeof a === 'object' ? (a.displayName || a.uniqueName || 'Sin asignar') : String(a))
     : 'Sin asignar';
-  const areaField = getAreaField();
   return {
     id:         raw.id,
     title:      f['System.Title'] || '(sin título)',
@@ -159,7 +154,7 @@ function parseItem(raw) {
     due:        f['Microsoft.VSTS.Scheduling.DueDate']   ? f['Microsoft.VSTS.Scheduling.DueDate'].substring(0, 10)   : null,
     finishDate: f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
     tipo:       f['System.WorkItemType'] || 'User Story',
-    area:       f[areaField] || f['Custom.Departamento'] || f['Custom.Tribu'] || '',
+    area:       f['Custom.Tribu'] || f['Custom.Departamento'] || '',
   };
 }
 
@@ -415,6 +410,52 @@ function EsfuerzoCard({ stats }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── BAU VS CHANGE ─────────────────────────────────────────────────────────────
+// Todo se trata como BAU por ahora hasta que se defina el campo en ADO
+function BauChangeCard({ items }) {
+  const committed = items.filter(i => !['Backlog', 'Removed'].includes(i.state));
+  const spTotal   = committed.reduce((s, i) => s + (i.sp || 0), 0);
+  const rows = [
+    { label: 'Tareas',        tot: committed.length, bau: committed.length, change: 0, spBau: spTotal, spChange: 0 },
+  ];
+  const pctBauItems  = 100;
+  const pctBauSP     = 100;
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Composición del sprint</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>BAU vs Change</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+
+      {[
+        { label: `Tareas (${committed.length})`,         bau: committed.length, change: 0, pctBau: pctBauItems, suf: '' },
+        { label: `Story Points (${spTotal})`,            bau: spTotal,          change: 0, pctBau: pctBauSP,    suf: ' SP' },
+      ].map(row => (
+        <div key={row.label}>
+          <span style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>{row.label}</span>
+          <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', gap: 2, margin: '6px 0' }}>
+            <div style={{ flex: row.bau || 0.001, background: C.navy, borderRadius: '5px 0 0 5px', minWidth: 4 }}></div>
+            <div style={{ flex: row.change || 0.001, background: C.magenta, borderRadius: '0 5px 5px 0', minWidth: row.change > 0 ? 4 : 0, display: row.change > 0 ? 'block' : 'none' }}></div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            {[{ label: 'BAU', color: C.navy, val: row.bau, suf: row.suf, pct: row.pctBau }, { label: 'Change', color: C.magenta, val: row.change, suf: row.suf, pct: 100 - row.pctBau }].map(s => (
+              <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color }}></div>
+                <span style={{ fontSize: 12, color: C.muted }}>{s.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.val}{s.suf}</span>
+                <span style={{ fontSize: 11, color: C.faint }}>({s.pct}%)</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1056,9 +1097,10 @@ function App() {
           <KpiCard label="Bloqueados"             value={stats.blocked.length}        valueColor={stats.blocked.length > 0 ? C.red : C.faint} sub={`${stats.spBlocked} SP detenidos`}                          icon="lock"   iconColor={stats.blocked.length > 0 ? C.red : C.faint} />
         </div>
 
-        {/* Esfuerzo SP + Carga por persona */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 14, alignItems: 'stretch' }}>
+        {/* Esfuerzo SP + BAU/Change + Carga por persona */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: 14, alignItems: 'stretch' }}>
           <EsfuerzoCard stats={stats} />
+          <BauChangeCard items={filteredItems} />
           <TeamGrid items={filteredItems} spCapacity={spCapacity} />
         </div>
 

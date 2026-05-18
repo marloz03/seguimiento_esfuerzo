@@ -11,11 +11,5 @@ EQUIPOS_TribuEverydayBanking=Autogestion Team
 # SP máximos en curso por persona (WIP)
 SP_CAPACITY=13
 
-# Campo que se muestra como "Área" en la tabla de items: departamento | tribu
-AREA_FIELD=departamento
-
 # Número de sprints pasados a mostrar en Throughput
 THROUGHPUT_SPRINTS=6
-
-# Tipos de work item considerados como "entregable" (mismo nivel que HU)
-TIPOS_ITEM=User Story,Tech Task,Spike
