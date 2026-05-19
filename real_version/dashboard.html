@@ -124,8 +124,8 @@ async function fetchItemsByIds(project, ids) {
   if (!ids.length) return [];
   const fields = [
     'System.Title', 'System.State', 'System.AssignedTo', 'System.WorkItemType',
+    'System.CreatedDate',
     'Microsoft.VSTS.Scheduling.StoryPoints',
-    'Microsoft.VSTS.Scheduling.DueDate',
     'Microsoft.VSTS.Scheduling.FinishDate',
     'Custom.Tribu', 'Custom.Departamento',
   ].join(',');
@@ -151,9 +151,9 @@ function parseItem(raw) {
     title:      f['System.Title'] || '(sin título)',
     state:      f['System.State'] || 'Backlog',
     assignedTo,
-    sp:         f['Microsoft.VSTS.Scheduling.StoryPoints'] || 0,
-    due:        f['Microsoft.VSTS.Scheduling.DueDate']   ? f['Microsoft.VSTS.Scheduling.DueDate'].substring(0, 10)   : null,
-    finishDate: f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
+    sp:          f['Microsoft.VSTS.Scheduling.StoryPoints'] || 0,
+    createdDate: f['System.CreatedDate'] ? f['System.CreatedDate'].substring(0, 10) : null,
+    finishDate:  f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
     tipo:       f['System.WorkItemType'] || 'User Story',
     area:       f['Custom.Tribu'] || f['Custom.Departamento'] || '',
   };
@@ -312,29 +312,26 @@ function Avatar({ name, size = 32 }) {
   );
 }
 
-// ── DUE DATE CELL ─────────────────────────────────────────────────────────────
-function DueDateCell({ due, state }) {
-  if (!due) return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
-  const dias = diasAtraso(due, state);
-  const dateStr = formatShortDate(due);
-  if (state === 'Done') return <span style={{ fontSize: 12, color: C.green }}>{dateStr}</span>;
-  if (dias > 0) return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 12, fontWeight: 600, color: C.red }}>{dateStr}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, color: C.red }}>+{dias}d</span>
-    </div>
-  );
-  if (dias === 0) return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 12, fontWeight: 600, color: C.amber }}>{dateStr}</span>
-      <span style={{ fontSize: 10, fontWeight: 600, color: C.amber }}>hoy</span>
-    </div>
-  );
-  const faltan = Math.abs(dias);
+// ── LEAD TIME CELL ────────────────────────────────────────────────────────────
+function LeadTimeCell({ item }) {
+  const { state, createdDate, finishDate } = item;
+  if (!createdDate) return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
+  if (state === 'Done') {
+    const end   = finishDate ? new Date(finishDate) : TODAY;
+    const days  = Math.max(0, Math.round((end - new Date(createdDate)) / 86400000));
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.green }}>{days}d</span>
+        <span style={{ fontSize: 10, color: C.faint }}>lead time</span>
+      </div>
+    );
+  }
+  if (state === 'Backlog') return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
+  const elapsed = Math.max(0, Math.round((TODAY - new Date(createdDate)) / 86400000));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 12, color: C.muted }}>{dateStr}</span>
-      <span style={{ fontSize: 10, color: C.faint }}>{faltan === 1 ? 'mañana' : `${faltan}d`}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: C.muted }}>{elapsed}d</span>
+      <span style={{ fontSize: 10, color: C.faint }}>en curso</span>
     </div>
   );
 }
@@ -651,7 +648,7 @@ function ItemsTable({ items }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['Título', 'Responsable', 'Estado', 'Área', 'Due date', 'SP'].map((h, i) => (
+              {['Título', 'Responsable', 'Estado', 'Área', 'Lead time', 'SP'].map((h, i) => (
                 <th key={i} style={{ fontSize: 10, fontWeight: 600, color: C.muted, textAlign: 'left', padding: '8px 16px', background: '#FAFBFD', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
@@ -682,7 +679,7 @@ function ItemsTable({ items }) {
                     ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.bg, color: C.muted, border: `1px solid ${C.border}` }}>{item.area}</span>
                     : <span style={{ color: C.faint }}>—</span>}
                 </td>
-                <td style={{ padding: '0 16px', height: 46 }}><DueDateCell due={item.due} state={item.state} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}><LeadTimeCell item={item} /></td>
                 <td style={{ padding: '0 16px', height: 46 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: item.state === 'Done' ? C.green : C.navy }}>{item.sp || '—'}</span>
                   {item.sp > 0 && <span style={{ fontSize: 11, color: C.faint, marginLeft: 3 }}>SP</span>}
