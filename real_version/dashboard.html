@@ -662,8 +662,9 @@ function ThroughputCard({ data }) {
             const hCommit   = committed > 0 ? Math.max(Math.round(committed / maxVal * CHART_H), 4) : 0;
             return (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 2, height: '100%', position: 'relative' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy }}>{val}</span>
-                {committed > val && <span style={{ fontSize: 9, color: C.faint }}>/{committed}</span>}
+                <span style={{ fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy }}>
+                  {val}{committed > val && <span style={{ fontSize: 9, fontWeight: 400, color: C.faint }}>/{committed}</span>}
+                </span>
                 <div style={{ width: '82%', position: 'relative', height: hCommit || hDone }}>
                   {/* barra comprometido (fondo gris claro) */}
                   {hCommit > 0 && (
