@@ -1,5 +1,3 @@
 # Config files con credenciales — copia config.example.js y renómbralo a config.js
-real_version/config.js
-real_version/config.txt
-primera_version/config.js
-primera_version/config.txt
+config.js
+config.txt
