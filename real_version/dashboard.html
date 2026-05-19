@@ -159,26 +159,64 @@ function parseItem(raw) {
   };
 }
 
-// Throughput for a single past sprint: count Done + committed items + sum SP
+// Throughput for a single past sprint using Analytics WorkItemSnapshot.
+// Queries the state of items on the LAST DAY of the sprint — so if someone
+// moved a story to another sprint after it ended, the historical snapshot
+// still reflects it correctly.
 async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+  try {
+    const tipos = getTipos();
+    const typeFilter = tipos.map(t => `WorkItemType eq '${t}'`).join(' or ');
+    const escapedPath = sprintPath.replace(/'/g, "''");
+
+    // OData $apply — must NOT be URL-encoded
+    const apply =
+      `filter(` +
+        `Iteration/IterationPath eq '${escapedPath}'` +
+        ` and (${typeFilter})` +
+        ` and StateCategory ne 'Removed'` +
+        ` and DateValue ge Iteration/StartDate` +
+        ` and DateValue le Iteration/EndDate` +
+      `)` +
+      `/groupby(` +
+        `(WorkItemId,WorkItemType,StateCategory,StoryPoints,DateValue),` +
+        `aggregate($count as ItemCount)` +
+      `)` +
+      `/filter(DateValue eq Iteration/EndDate)`;
+
+    const url = `https://analytics.dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_odata/v3.0-preview/WorkItemSnapshot?$apply=${apply}`;
+    const r = await fetch(url, {
+      headers: { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Accept': 'application/json' }
+    });
+    if (!r.ok) throw new Error(`Analytics ${r.status}`);
+    const data = await r.json();
+    const items = data.value || [];
+
+    const committedHu = items.length;
+    const committedSp = items.reduce((s, i) => s + (i.StoryPoints || 0), 0);
+    const doneItems   = items.filter(i => i.StateCategory === 'Completed');
+    const hu = doneItems.length;
+    const sp = doneItems.reduce((s, i) => s + (i.StoryPoints || 0), 0);
+
+    return { sprint: sprintName, hu, sp, committedHu, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
+  } catch (_) {
+    // Fallback to WIQL if Analytics is unavailable
+    return fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate);
+  }
+}
+
+// Fallback: current-state WIQL query (less accurate if sprints were modified after close)
+async function fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos().map(t => `'${t}'`).join(',');
     const sprintClause = `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'`;
-
     const [doneData, committedData] = await Promise.all([
-      adoFetch(
-        `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }
-      ),
-      adoFetch(
-        `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }
-      ),
+      adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
+      adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
     ]);
-
-    const doneIds      = (doneData.workItems || []).map(w => w.id);
     const committedIds = (committedData.workItems || []).map(w => w.id);
-
     let sp = 0, committedSp = 0;
     if (committedIds.length) {
       const itemData = await adoFetch(
@@ -190,8 +228,7 @@ async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, 
         if (i.fields['System.State'] === 'Done') sp += s;
       });
     }
-
-    return { sprint: sprintName, hu: doneIds.length, sp, committedHu: committedIds.length, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
+    return { sprint: sprintName, hu: (doneData.workItems || []).length, sp, committedHu: committedIds.length, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
   } catch (_) {
     return { sprint: sprintName, hu: 0, sp: 0, committedHu: 0, committedSp: 0, startDate: startDate || null, finishDate: finishDate || null, current: false };
   }
