@@ -460,49 +460,88 @@ function BauChangeCard({ items }) {
 
 // ── TEAM GRID ─────────────────────────────────────────────────────────────────
 function TeamGrid({ items, spCapacity }) {
+  const [view, setView] = useState('capacidad');
   const team = computeTeam(items, spCapacity);
   const overloaded = team.filter(p => p.overCapacity).length;
+
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0, gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Carga por persona</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>SP en curso vs capacidad ({spCapacity})</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>
+            {view === 'capacidad' ? `SP en curso vs capacidad (${spCapacity})` : 'SP completados vs comprometidos'}
+          </div>
         </div>
-        {overloaded > 0
-          ? <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, background: C.redBg, color: C.red, whiteSpace: 'nowrap' }}>{overloaded} SOBRECARGAD{overloaded > 1 ? 'OS' : 'O'}</span>
-          : <Icon name="users" size={16} color={C.faint} />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {view === 'capacidad' && overloaded > 0 &&
+            <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, background: C.redBg, color: C.red, whiteSpace: 'nowrap' }}>{overloaded} SOBRECARGAD{overloaded > 1 ? 'OS' : 'O'}</span>
+          }
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[{ id: 'capacidad', label: 'Capacidad' }, { id: 'avance', label: 'Avance' }].map(t => (
+              <button key={t.id} onClick={() => setView(t.id)} style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid', borderColor: view === t.id ? C.navy : C.border, background: view === t.id ? C.navy : 'transparent', color: view === t.id ? '#fff' : C.muted, cursor: 'pointer', fontFamily: 'inherit' }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
       </div>
       {team.length === 0 && (
         <div style={{ fontSize: 13, color: C.faint, textAlign: 'center', padding: '20px 0' }}>Sin datos de personas</div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap: 6, overflowY: 'auto', paddingRight: 2 }}>
-        {team.map((p, idx) => {
+        {team.map((p) => {
           const color = personColor(p.name);
           const isBlocked = p.items.some(i => i.state === 'Bloqueado');
           const firstName = p.name.split(' ')[0];
-          const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
-          const rowBg     = p.overCapacity ? C.redBg : C.bg;
-          const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
-          const barFill   = Math.min(p.pctCapacity, 100);
-          const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+
+          if (view === 'capacidad') {
+            const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
+            const rowBg     = p.overCapacity ? C.redBg : C.bg;
+            const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
+            const barFill   = Math.min(p.pctCapacity, 100);
+            const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+            return (
+              <div key={p.name}
+                title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: rowBg, border: `1px solid ${rowBorder}`, minWidth: 0 }}>
+                <Avatar name={p.name} size={30} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
+                    <span style={{ fontWeight: 600, fontSize: 12, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{firstName}</span>
+                    {isBlocked && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: C.redBg, color: C.red, flexShrink: 0 }}>BLOQ</span>}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {p.spDoing}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.capacity}</span>
+                      <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 2 }}>SP</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden', position: 'relative' }}>
+                    <div style={{ width: `${barFill}%`, height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
+                    {p.overCapacity && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents: 'none' }}></div>}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // vista avance: spDone vs spTotal
+          const pctAvance = p.spTotal > 0 ? Math.min(Math.round(p.spDone / p.spTotal * 100), 100) : 0;
+          const avanceColor = pctAvance === 100 ? C.green : pctAvance >= 50 ? color : C.amber;
+          const doneItems = p.items.filter(i => i.state === 'Done');
           return (
             <div key={p.name}
-              title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: rowBg, border: `1px solid ${rowBorder}`, minWidth: 0 }}>
+              title={doneItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items completados'}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: C.bg, border: `1px solid ${C.borderLight}`, minWidth: 0 }}>
               <Avatar name={p.name} size={30} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
                   <span style={{ fontWeight: 600, fontSize: 12, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{firstName}</span>
                   {isBlocked && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: C.redBg, color: C.red, flexShrink: 0 }}>BLOQ</span>}
-                  <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                    {p.spDoing}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.capacity}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: avanceColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {p.spDone}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.spTotal}</span>
                     <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 2 }}>SP</span>
                   </span>
                 </div>
-                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden', position: 'relative' }}>
-                  <div style={{ width: `${barFill}%`, height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
-                  {p.overCapacity && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents: 'none' }}></div>}
+                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden' }}>
+                  <div style={{ width: `${pctAvance}%`, height: '100%', background: avanceColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
                 </div>
               </div>
             </div>
