@@ -650,7 +650,7 @@ function ThroughputCard({ data }) {
         </div>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minHeight: CHART_H + 60 }}>
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 10, height: CHART_H, marginBottom: 6 }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 10, height: CHART_H, marginBottom: 6, paddingTop: 20 }}>
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: Math.round(avgPast / maxVal * CHART_H), pointerEvents: 'none', zIndex: 1 }}>
             <div style={{ borderTop: `1px dashed ${C.amber}`, opacity: 0.7 }}></div>
             <span style={{ position: 'absolute', right: 0, top: -13, fontSize: 9, fontWeight: 700, color: C.amber, background: '#fff', padding: '0 4px' }}>avg {avgPast}</span>
@@ -661,11 +661,12 @@ function ThroughputCard({ data }) {
             const hDone     = Math.max(Math.round(val / maxVal * CHART_H), val > 0 ? 4 : 0);
             const hCommit   = committed > 0 ? Math.max(Math.round(committed / maxVal * CHART_H), 4) : 0;
             return (
-              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 2, height: '100%', position: 'relative' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy }}>
-                  {val}{committed > val && <span style={{ fontSize: 9, fontWeight: 400, color: C.faint }}>/{committed}</span>}
-                </span>
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', position: 'relative' }}>
                 <div style={{ width: '82%', position: 'relative', height: hCommit || hDone }}>
+                  {/* label flotante encima de la barra */}
+                  <span style={{ position: 'absolute', top: -18, left: 0, right: 0, textAlign: 'center', fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy, whiteSpace: 'nowrap' }}>
+                    {val}{committed > val && <span style={{ fontSize: 9, fontWeight: 400, color: C.faint }}>/{committed}</span>}
+                  </span>
                   {/* barra comprometido (fondo gris claro) */}
                   {hCommit > 0 && (
                     <div title={`Comprometido: ${committed} ${view === 'hu' ? 'HU' : 'SP'}`} style={{
