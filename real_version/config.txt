@@ -1,0 +1,15 @@
+PAT=8FuorIRmS8Jbauo8YKgqeLl9KFOdnZsqsUZkamCsrSbZk9D18fTFJQQJ99CDACAAAAA51TxcAAASAZDO2sZw
+ORG=bancoguayaquil
+PROYECTOS=TribuDatayAnalitica,TribuBusinessBanking,TribuSeguros,TribuEverydayBanking
+
+EQUIPOS_TribuDatayAnalitica=LinkUp,LinkUpPeople,LinkUpCampa,LinkUpProyectosData,tda-data-team,tda-members-team
+EQUIPOS_TribuBusinessBanking=Banca Digital Team
+EQUIPOS_TribuSeguros=TribuSeguros Team
+EQUIPOS_TribuEverydayBanking=Autogestion Team
+
+# ── Dashboard settings ────────────────────────────────────────────────────────
+# SP máximos en curso por persona (WIP)
+SP_CAPACITY=13
+
+# Número de sprints pasados a mostrar en Throughput
+THROUGHPUT_SPRINTS=6

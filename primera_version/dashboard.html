@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard Sprint · Banco Guayaquil</title>
+<script src="config.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a1a;font-size:14px}
@@ -247,20 +248,18 @@ function renderAtraso(dias,due){if(!due)return'<span class="atraso-nd">sin fecha
 function renderDue(due,dias){if(!due)return'<span style="color:#ccc">—</span>';const s=new Date(due).toLocaleDateString('es-EC',{day:'2-digit',month:'short'});return dias>0?`<span style="color:#A32D2D;font-weight:600">${s}</span>`:`<span style="color:#27500A">${s}</span>`}
 function urgencia(item){const f=item.fields,s=f['System.State'],d=diasAtraso(f['Microsoft.VSTS.Scheduling.DueDate'],s);if(s==='Blocked')return 0;if(d>3)return 1;if(d>0)return 2;if(s==='Doing')return 3;if(s==='Revisión Calidad')return 4;if(s==='Backlog')return 5;if(s==='Done')return 99;return 6}
 
-async function parsearConfig(){
-  const r=await fetch('config.txt');
-  if(!r.ok)throw new Error('No se encontró config.txt junto al dashboard.');
-  const txt=await r.text();
+function parsearConfig(){
+  if(!window.CFG_RAW)throw new Error('No se encontró config.js junto al dashboard, o no se cargó correctamente.');
   const cfg={};
-  txt.split('\n').forEach(line=>{
+  window.CFG_RAW.split('\n').forEach(line=>{
     line=line.trim();
     if(!line||line.startsWith('#'))return;
     const idx=line.indexOf('=');
     if(idx<0)return;
     cfg[line.substring(0,idx).trim()]=line.substring(idx+1).trim();
   });
-  if(!cfg.PAT||cfg.PAT==='pega_tu_pat_aqui')throw new Error('Edita config.txt y reemplaza el PAT con tu token real.');
-  if(!cfg.PROYECTOS)throw new Error('Agrega la línea PROYECTOS= en config.txt');
+  if(!cfg.PAT||cfg.PAT==='pega_tu_pat_aqui')throw new Error('Edita config.js y reemplaza el PAT con tu token real.');
+  if(!cfg.PROYECTOS)throw new Error('Agrega la línea PROYECTOS= en config.js');
   return cfg;
 }
 
@@ -475,8 +474,8 @@ async function recargar(){
 (async()=>{
   const splashSub=document.getElementById('splash-sub');
   try{
-    splashSub.textContent='Leyendo config.txt...';
-    _cfg=await parsearConfig();
+    splashSub.textContent='Leyendo config.js...';
+    _cfg=parsearConfig();
     const proyectos=_cfg.PROYECTOS.split(',').map(p=>p.trim()).filter(Boolean);
     const mem=loadMemory();
     if(mem.proyecto&&proyectos.includes(mem.proyecto)&&mem.team){
