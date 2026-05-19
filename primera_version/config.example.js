@@ -1,4 +1,7 @@
-PAT=8FuorIRmS8Jbauo8YKgqeLl9KFOdnZsqsUZkamCsrSbZk9D18fTFJQQJ99CDACAAAAA51TxcAAASAZDO2sZw
+// Copia este archivo como config.js y rellena los valores.
+// NUNCA subas config.js al repositorio — contiene tu PAT.
+window.CFG_RAW = `
+PAT=pega_tu_pat_aqui
 ORG=bancoguayaquil
 PROYECTOS=TribuDatayAnalitica,TribuBusinessBanking,TribuSeguros,TribuEverydayBanking
 
@@ -6,3 +9,4 @@ EQUIPOS_TribuDatayAnalitica=LinkUp,LinkUpPeople,LinkUpCampa,LinkUpProyectosData,
 EQUIPOS_TribuBusinessBanking=Banca Digital Team
 EQUIPOS_TribuSeguros=TribuSeguros Team
 EQUIPOS_TribuEverydayBanking=Autogestion Team
+`;
