@@ -1,6 +1,7 @@
-// Edita los valores aquí. No toques las líneas window.CFG_RAW ni el cierre `.
+// Copia este archivo como config.js y rellena los valores.
+// NUNCA subas config.js al repositorio — contiene tu PAT.
 window.CFG_RAW = `
-PAT=8FuorIRmS8Jbauo8YKgqeLl9KFOdnZsqsUZkamCsrSbZk9D18fTFJQQJ99CDACAAAAA51TxcAAASAZDO2sZw
+PAT=pega_tu_pat_aqui
 ORG=bancoguayaquil
 PROYECTOS=TribuDatayAnalitica,TribuBusinessBanking,TribuSeguros,TribuEverydayBanking
 
