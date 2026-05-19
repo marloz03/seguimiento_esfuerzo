@@ -159,32 +159,78 @@ function parseItem(raw) {
   };
 }
 
-// Throughput for a single past sprint: count Done items + sum SP
-async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName) {
+// Throughput for a single past sprint using Analytics WorkItemSnapshot.
+// Queries the state of items on the LAST DAY of the sprint — so if someone
+// moved a story to another sprint after it ended, the historical snapshot
+// still reflects it correctly.
+async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+  try {
+    const tipos = getTipos();
+    const typeFilter = tipos.map(t => `WorkItemType eq '${t}'`).join(' or ');
+    const escapedPath = sprintPath.replace(/'/g, "''");
+
+    // OData $apply — must NOT be URL-encoded
+    const apply =
+      `filter(` +
+        `Iteration/IterationPath eq '${escapedPath}'` +
+        ` and (${typeFilter})` +
+        ` and StateCategory ne 'Removed'` +
+        ` and DateValue ge Iteration/StartDate` +
+        ` and DateValue le Iteration/EndDate` +
+      `)` +
+      `/groupby(` +
+        `(WorkItemId,WorkItemType,StateCategory,StoryPoints,DateValue),` +
+        `aggregate($count as ItemCount)` +
+      `)` +
+      `/filter(DateValue eq Iteration/EndDate)`;
+
+    const url = `https://analytics.dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_odata/v3.0-preview/WorkItemSnapshot?$apply=${apply}`;
+    const r = await fetch(url, {
+      headers: { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Accept': 'application/json' }
+    });
+    if (!r.ok) throw new Error(`Analytics ${r.status}`);
+    const data = await r.json();
+    const items = data.value || [];
+
+    const committedHu = items.length;
+    const committedSp = items.reduce((s, i) => s + (i.StoryPoints || 0), 0);
+    const doneItems   = items.filter(i => i.StateCategory === 'Completed');
+    const hu = doneItems.length;
+    const sp = doneItems.reduce((s, i) => s + (i.StoryPoints || 0), 0);
+
+    return { sprint: sprintName, hu, sp, committedHu, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
+  } catch (_) {
+    // Fallback to WIQL if Analytics is unavailable
+    return fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate);
+  }
+}
+
+// Fallback: current-state WIQL query (less accurate if sprints were modified after close)
+async function fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos().map(t => `'${t}'`).join(',');
-    const body = {
-      query: `SELECT [System.Id] FROM WorkItems
-              WHERE [System.TeamProject] = '${project}'
-                AND [System.AreaPath] UNDER '${areaPath}'
-                AND [System.WorkItemType] IN (${tipos})
-                AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'
-                AND [System.State] = 'Done'`
-    };
-    const data = await adoFetch(
-      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-      { method: 'POST', body: JSON.stringify(body) }
-    );
-    const ids = (data.workItems || []).map(w => w.id);
-    if (!ids.length) return { sprint: sprintName, hu: 0, sp: 0, current: false };
-    const chunk = ids.slice(0, 200);
-    const itemData = await adoFetch(
-      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${chunk.join(',')}&fields=Microsoft.VSTS.Scheduling.StoryPoints&api-version=7.1`
-    );
-    const sp = (itemData.value || []).reduce((s, i) => s + (i.fields['Microsoft.VSTS.Scheduling.StoryPoints'] || 0), 0);
-    return { sprint: sprintName, hu: ids.length, sp, current: false };
+    const sprintClause = `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'`;
+    const [doneData, committedData] = await Promise.all([
+      adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
+      adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
+    ]);
+    const committedIds = (committedData.workItems || []).map(w => w.id);
+    let sp = 0, committedSp = 0;
+    if (committedIds.length) {
+      const itemData = await adoFetch(
+        `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/workitems?ids=${committedIds.slice(0, 200).join(',')}&fields=Microsoft.VSTS.Scheduling.StoryPoints,System.State&api-version=7.1`
+      );
+      (itemData.value || []).forEach(i => {
+        const s = i.fields['Microsoft.VSTS.Scheduling.StoryPoints'] || 0;
+        committedSp += s;
+        if (i.fields['System.State'] === 'Done') sp += s;
+      });
+    }
+    return { sprint: sprintName, hu: (doneData.workItems || []).length, sp, committedHu: committedIds.length, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
   } catch (_) {
-    return { sprint: sprintName, hu: 0, sp: 0, current: false };
+    return { sprint: sprintName, hu: 0, sp: 0, committedHu: 0, committedSp: 0, startDate: startDate || null, finishDate: finishDate || null, current: false };
   }
 }
 
@@ -460,49 +506,88 @@ function BauChangeCard({ items }) {
 
 // ── TEAM GRID ─────────────────────────────────────────────────────────────────
 function TeamGrid({ items, spCapacity }) {
+  const [view, setView] = useState('capacidad');
   const team = computeTeam(items, spCapacity);
   const overloaded = team.filter(p => p.overCapacity).length;
+
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0, gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Carga por persona</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>SP en curso vs capacidad ({spCapacity})</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>
+            {view === 'capacidad' ? `SP en curso vs capacidad (${spCapacity})` : 'SP completados vs comprometidos'}
+          </div>
         </div>
-        {overloaded > 0
-          ? <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, background: C.redBg, color: C.red, whiteSpace: 'nowrap' }}>{overloaded} SOBRECARGAD{overloaded > 1 ? 'OS' : 'O'}</span>
-          : <Icon name="users" size={16} color={C.faint} />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {view === 'capacidad' && overloaded > 0 &&
+            <span title="Personas con SP en curso por encima de la capacidad" style={{ fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, background: C.redBg, color: C.red, whiteSpace: 'nowrap' }}>{overloaded} SOBRECARGAD{overloaded > 1 ? 'OS' : 'O'}</span>
+          }
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[{ id: 'capacidad', label: 'Capacidad' }, { id: 'avance', label: 'Avance' }].map(t => (
+              <button key={t.id} onClick={() => setView(t.id)} style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: '1px solid', borderColor: view === t.id ? C.navy : C.border, background: view === t.id ? C.navy : 'transparent', color: view === t.id ? '#fff' : C.muted, cursor: 'pointer', fontFamily: 'inherit' }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
       </div>
       {team.length === 0 && (
         <div style={{ fontSize: 13, color: C.faint, textAlign: 'center', padding: '20px 0' }}>Sin datos de personas</div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap: 6, overflowY: 'auto', paddingRight: 2 }}>
-        {team.map((p, idx) => {
+        {team.map((p) => {
           const color = personColor(p.name);
           const isBlocked = p.items.some(i => i.state === 'Bloqueado');
           const firstName = p.name.split(' ')[0];
-          const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
-          const rowBg     = p.overCapacity ? C.redBg : C.bg;
-          const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
-          const barFill   = Math.min(p.pctCapacity, 100);
-          const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+
+          if (view === 'capacidad') {
+            const statusColor = p.overCapacity ? C.red : p.nearCapacity ? C.amber : color;
+            const rowBg     = p.overCapacity ? C.redBg : C.bg;
+            const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
+            const barFill   = Math.min(p.pctCapacity, 100);
+            const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+            return (
+              <div key={p.name}
+                title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: rowBg, border: `1px solid ${rowBorder}`, minWidth: 0 }}>
+                <Avatar name={p.name} size={30} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
+                    <span style={{ fontWeight: 600, fontSize: 12, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{firstName}</span>
+                    {isBlocked && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: C.redBg, color: C.red, flexShrink: 0 }}>BLOQ</span>}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {p.spDoing}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.capacity}</span>
+                      <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 2 }}>SP</span>
+                    </span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden', position: 'relative' }}>
+                    <div style={{ width: `${barFill}%`, height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
+                    {p.overCapacity && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents: 'none' }}></div>}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // vista avance: spDone vs spTotal
+          const pctAvance = p.spTotal > 0 ? Math.min(Math.round(p.spDone / p.spTotal * 100), 100) : 0;
+          const avanceColor = pctAvance === 100 ? C.green : pctAvance >= 50 ? color : C.amber;
+          const doneItems = p.items.filter(i => i.state === 'Done');
           return (
             <div key={p.name}
-              title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: rowBg, border: `1px solid ${rowBorder}`, minWidth: 0 }}>
+              title={doneItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items completados'}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: C.bg, border: `1px solid ${C.borderLight}`, minWidth: 0 }}>
               <Avatar name={p.name} size={30} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
                   <span style={{ fontWeight: 600, fontSize: 12, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{firstName}</span>
                   {isBlocked && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: C.redBg, color: C.red, flexShrink: 0 }}>BLOQ</span>}
-                  <span style={{ fontSize: 11, fontWeight: 700, color: statusColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                    {p.spDoing}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.capacity}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: avanceColor, marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {p.spDone}<span style={{ color: C.faint, fontWeight: 500 }}>/{p.spTotal}</span>
                     <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 2 }}>SP</span>
                   </span>
                 </div>
-                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden', position: 'relative' }}>
-                  <div style={{ width: `${barFill}%`, height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
-                  {p.overCapacity && <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255,255,255,0.4) 3px, rgba(255,255,255,0.4) 5px)`, pointerEvents: 'none' }}></div>}
+                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: 'hidden' }}>
+                  <div style={{ width: `${pctAvance}%`, height: '100%', background: avanceColor, borderRadius: 3, transition: 'width 0.5s ease' }}></div>
                 </div>
               </div>
             </div>
@@ -520,13 +605,22 @@ function ThroughputCard({ data }) {
   const past    = data.filter(d => !d.current);
   const current = data.find(d => d.current);
   const vals    = past.map(d => view === 'hu' ? d.hu : d.sp);
-  const maxVal  = Math.max(...data.map(d => view === 'hu' ? d.hu : d.sp), 1);
+  // max across both done and committed so bars scale correctly
+  const maxVal  = Math.max(...data.map(d => view === 'hu' ? Math.max(d.hu, d.committedHu || 0) : Math.max(d.sp, d.committedSp || 0)), 1);
   const avgPast = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
   const lastVal = past.length ? vals[vals.length - 1] : 0;
-  const trend   = lastVal > avgPast ? { sym: '↑', color: C.green,  txt: 'sobre promedio' }
-                : lastVal < avgPast ? { sym: '↓', color: C.amber,  txt: 'bajo promedio' }
+  const trend   = lastVal > avgPast ? { sym: '↑', color: C.green, txt: 'sobre promedio' }
+                : lastVal < avgPast ? { sym: '↓', color: C.amber, txt: 'bajo promedio' }
                 :                    { sym: '→', color: C.muted,  txt: 'estable' };
   const CHART_H = 150;
+
+  function sprintDateLabel(d) {
+    if (!d.startDate && !d.finishDate) return null;
+    const fmt = iso => new Date(iso).toLocaleDateString('es-EC', { day: '2-digit', month: 'short' });
+    if (d.startDate && d.finishDate) return `${fmt(d.startDate)} – ${fmt(d.finishDate)}`;
+    if (d.finishDate) return `hasta ${fmt(d.finishDate)}`;
+    return fmt(d.startDate);
+  }
 
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -555,33 +649,59 @@ function ThroughputCard({ data }) {
           </div>
         </div>
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minHeight: CHART_H + 50 }}>
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 10, height: CHART_H, marginBottom: 6 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minHeight: CHART_H + 60 }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: 10, height: CHART_H, marginBottom: 6, overflow: 'visible' }}>
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: Math.round(avgPast / maxVal * CHART_H), pointerEvents: 'none', zIndex: 1 }}>
             <div style={{ borderTop: `1px dashed ${C.amber}`, opacity: 0.7 }}></div>
             <span style={{ position: 'absolute', right: 0, top: -13, fontSize: 9, fontWeight: 700, color: C.amber, background: '#fff', padding: '0 4px' }}>avg {avgPast}</span>
           </div>
           {data.map((d, i) => {
-            const val = view === 'hu' ? d.hu : d.sp;
-            const h   = Math.max(Math.round(val / maxVal * CHART_H), 4);
+            const val       = view === 'hu' ? d.hu : d.sp;
+            const committed = view === 'hu' ? (d.committedHu || 0) : (d.committedSp || 0);
+            const MAX_BAR   = CHART_H - 24;
+            const hDone     = Math.max(Math.round(val / maxVal * MAX_BAR), val > 0 ? 4 : 0);
+            const hCommit   = committed > 0 ? Math.max(Math.round(committed / maxVal * MAX_BAR), 4) : 0;
             return (
-              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 4, height: '100%', position: 'relative' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy }}>{val}</span>
-                <div title={`${d.sprint}: ${val} ${view === 'hu' ? 'HU' : 'SP'}`} style={{
-                  width: '82%', height: h, borderRadius: '4px 4px 0 0',
-                  background: d.current
-                    ? `linear-gradient(180deg, ${C.magenta} 0%, ${C.magentaDark} 100%)`
-                    : `linear-gradient(180deg, #A8B3CC 0%, #7C8AAB 100%)`,
-                  boxShadow: d.current ? `0 2px 8px rgba(196,24,106,0.25)` : 'none',
-                }}></div>
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', position: 'relative' }}>
+                <div style={{ width: '82%', position: 'relative', height: hCommit || hDone }}>
+                  {/* label flotante encima de la barra */}
+                  <span style={{ position: 'absolute', top: -18, left: 0, right: 0, textAlign: 'center', fontSize: 11, fontWeight: 700, color: d.current ? C.magenta : C.navy, whiteSpace: 'nowrap' }}>
+                    {val}{committed > val && <span style={{ fontSize: 9, fontWeight: 400, color: C.faint }}>/{committed}</span>}
+                  </span>
+                  {/* barra comprometido (fondo gris claro) */}
+                  {hCommit > 0 && (
+                    <div title={`Comprometido: ${committed} ${view === 'hu' ? 'HU' : 'SP'}`} style={{
+                      position: 'absolute', bottom: 0, left: 0, right: 0,
+                      height: hCommit, borderRadius: '4px 4px 0 0',
+                      background: '#D8DCE8',
+                    }}></div>
+                  )}
+                  {/* barra completado (encima) */}
+                  {hDone > 0 && (
+                    <div title={`${d.sprint}: ${val} ${view === 'hu' ? 'HU' : 'SP'} completados`} style={{
+                      position: 'absolute', bottom: 0, left: 0, right: 0,
+                      height: hDone, borderRadius: '4px 4px 0 0',
+                      background: d.current
+                        ? `linear-gradient(180deg, ${C.magenta} 0%, ${C.magentaDark} 100%)`
+                        : `linear-gradient(180deg, #A8B3CC 0%, #7C8AAB 100%)`,
+                      boxShadow: d.current ? `0 2px 8px rgba(196,24,106,0.25)` : 'none',
+                    }}></div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          {data.map((d, i) => (
-            <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, fontWeight: d.current ? 700 : 500, color: d.current ? C.magenta : C.muted, whiteSpace: 'nowrap' }}>{d.sprint}{d.current ? ' •' : ''}</span>
-          ))}
+          {data.map((d, i) => {
+            const dateLabel = sprintDateLabel(d);
+            return (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                <span style={{ textAlign: 'center', fontSize: 10, fontWeight: d.current ? 700 : 500, color: d.current ? C.magenta : C.muted, whiteSpace: 'nowrap' }}>{d.sprint}{d.current ? ' •' : ''}</span>
+                {dateLabel && <span style={{ textAlign: 'center', fontSize: 9, color: C.faint, whiteSpace: 'nowrap' }}>{dateLabel}</span>}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -1023,14 +1143,19 @@ function App() {
       const N = parseInt(cfg.THROUGHPUT_SPRINTS) || 6;
       const pastToFetch = pastIts.slice(-N);
       const historico = await Promise.all(
-        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaPath, it.path, it.name))
+        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaPath, it.path, it.name, it.attributes?.startDate?.substring(0, 10), it.attributes?.finishDate?.substring(0, 10)))
       );
-      const doneCurrent = parsed.filter(i => i.state === 'Done');
+      const doneCurrent    = parsed.filter(i => i.state === 'Done');
+      const committedCurrent = parsed.filter(i => i.state !== 'Removed');
       historico.push({
-        sprint:  theIt?.name || spLabel,
-        hu:      doneCurrent.length,
-        sp:      doneCurrent.reduce((s, i) => s + (i.sp || 0), 0),
-        current: true,
+        sprint:      theIt?.name || spLabel,
+        hu:          doneCurrent.length,
+        sp:          doneCurrent.reduce((s, i) => s + (i.sp || 0), 0),
+        committedHu: committedCurrent.length,
+        committedSp: committedCurrent.reduce((s, i) => s + (i.sp || 0), 0),
+        startDate:   theIt?.attributes?.startDate?.substring(0, 10) || null,
+        finishDate:  theIt?.attributes?.finishDate?.substring(0, 10) || null,
+        current:     true,
       });
       setThroughput(historico);
 
