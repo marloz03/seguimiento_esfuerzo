@@ -1000,7 +1000,7 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
         {proyecto && (
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Equipo</label>
-            <select value={equipo} onChange={e => { setEquipo(e.target.value); setSprints([]); setSprintPath(''); }} style={inputStyle}>
+            <select value={equipo} onChange={e => setEquipo(e.target.value)} style={inputStyle}>
               <option value="">— Selecciona —</option>
               {equipos.map(eq => <option key={eq} value={eq}>{eq}</option>)}
             </select>
