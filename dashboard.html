@@ -78,9 +78,14 @@ function loadMemory() {
 
 // ── ADO API ───────────────────────────────────────────────────────────────────
 let _cfg = {};
+let _currentProject = '';
+
+function patFor() {
+  return (_currentProject && _cfg['PAT_' + _currentProject]) || _cfg.PAT;
+}
 
 function hdrs() {
-  return { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Content-Type': 'application/json' };
+  return { 'Authorization': 'Basic ' + btoa(':' + patFor()), 'Content-Type': 'application/json' };
 }
 const TIPOS_ITEM = ['User Story', 'Tech Task', 'Spike'];
 function getTipos() { return TIPOS_ITEM; }
@@ -202,7 +207,7 @@ async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, 
 
     const url = `https://analytics.dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_odata/v3.0-preview/WorkItemSnapshot?$apply=${apply}`;
     const r = await fetch(url, {
-      headers: { 'Authorization': 'Basic ' + btoa(':' + _cfg.PAT), 'Accept': 'application/json' }
+      headers: { 'Authorization': 'Basic ' + btoa(':' + patFor()), 'Accept': 'application/json' }
     });
     if (!r.ok) throw new Error(`Analytics ${r.status}`);
     const data = await r.json();
@@ -954,6 +959,7 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
   async function loadSprints() {
     setLoadingSpr(true); setErrSpr(''); setSprints([]); setSprintPath('');
     try {
+      _currentProject = proyecto;
       const its = (await fetchIterations(proyecto, null)).slice().reverse();
       setSprints(its);
       const current = its.find(it => it.attributes?.timeFrame === 'current');
@@ -1116,6 +1122,7 @@ function App() {
 
   async function loadData() {
     try {
+      _currentProject = context.proyecto;
       setLoadingMsg('Cargando iteraciones...');
       const areaPath = `${context.proyecto}\\${context.equipo}`;
       const iterations = await fetchIterations(context.proyecto, context.equipo);
