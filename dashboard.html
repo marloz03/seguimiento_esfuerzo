@@ -989,7 +989,9 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
     setLoadingSpr(true); setErrSpr(''); setSprints([]); setSprintPath('');
     try {
       _currentProject = proyecto;
-      const its = (await fetchIterations(proyecto, null)).slice().reverse();
+      const its = (await fetchIterations(proyecto, null))
+        .slice()
+        .sort((a, b) => (b.attributes?.startDate || '').localeCompare(a.attributes?.startDate || ''));
       setSprints(its);
       const current = its.find(it => it.attributes?.timeFrame === 'current');
       if (current) setSprintPath(current.path);
@@ -1045,11 +1047,18 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
               <div style={{ fontSize: 12, color: C.red, padding: '8px 0' }}>{errSpr}</div>
             ) : sprints.length > 0 ? (
               <select value={sprintPath} onChange={e => setSprintPath(e.target.value)} style={inputStyle}>
-                {sprints.map(it => (
-                  <option key={it.path} value={it.path}>
-                    {it.name}{it.attributes?.timeFrame === 'current' ? ' ✓ activo' : ''}
-                  </option>
-                ))}
+                {sprints.map(it => {
+                  // Ruta padre entre el proyecto y el sprint (ej. "2025 \ P2") para
+                  // distinguir sprints con el mismo nombre en distintos años/PIs.
+                  const segs = it.path.split('\\');
+                  const parent = segs.slice(1, -1).join(' \\ ');
+                  const start = it.attributes?.startDate ? it.attributes.startDate.substring(0, 10) : '';
+                  return (
+                    <option key={it.path} value={it.path}>
+                      {it.name}{parent ? ` · ${parent}` : ''}{start ? ` · ${start}` : ''}{it.attributes?.timeFrame === 'current' ? ' ✓ activo' : ''}
+                    </option>
+                  );
+                })}
               </select>
             ) : null}
           </div>
