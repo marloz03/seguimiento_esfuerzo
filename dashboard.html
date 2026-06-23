@@ -111,7 +111,11 @@ async function fetchIterations(project, team) {
       console.warn('teamsettings/iterations falló, usando el árbol del proyecto:', e.message);
     }
   }
-  // 2) Fallback: árbol de iteraciones COMPLETO del proyecto (todos los squads).
+  return fetchProjectIterations(project);
+}
+
+// Árbol de iteraciones COMPLETO del proyecto (todos los squads).
+async function fetchProjectIterations(project) {
   const data = await adoFetch(
     `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/classificationnodes/Iterations?$depth=10&api-version=7.1`
   );
@@ -1017,6 +1021,7 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
   const [sprintPath,   setSprintPath]   = useState(context?.sprintPath || '');
   const [loadingSpr,   setLoadingSpr]   = useState(false);
   const [errSpr,       setErrSpr]       = useState('');
+  const [warnSpr,      setWarnSpr]      = useState('');
 
   const proyectos = cfg ? cfg.PROYECTOS.split(',').map(p => p.trim()).filter(Boolean) : [];
   const equipos   = cfg ? (cfg['EQUIPOS_' + proyecto] || '').split(',').map(e => e.trim()).filter(Boolean) : [];
@@ -1026,10 +1031,17 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
   }, [proyecto, equipo]);
 
   async function loadSprints() {
-    setLoadingSpr(true); setErrSpr(''); setSprints([]); setSprintPath('');
+    setLoadingSpr(true); setErrSpr(''); setWarnSpr(''); setSprints([]); setSprintPath('');
     try {
       _currentProject = proyecto;
-      const its = (await fetchIterations(proyecto, equipo))
+      let raw;
+      try {
+        raw = await fetchTeamIterations(proyecto, equipo);   // solo sprints del equipo
+      } catch (e) {
+        setWarnSpr(`No se pudo filtrar por equipo (${e.message}). Mostrando todos los sprints del proyecto.`);
+        raw = await fetchProjectIterations(proyecto);        // fallback: todo el proyecto
+      }
+      const its = raw
         .slice()
         .sort((a, b) => (b.attributes?.startDate || '').localeCompare(a.attributes?.startDate || ''));
       setSprints(its);
@@ -1081,6 +1093,11 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
         {equipo && (
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Sprint</label>
+            {warnSpr && (
+              <div style={{ fontSize: 11, color: C.amber, background: C.amberBg, borderRadius: 6, padding: '6px 8px', marginBottom: 8, lineHeight: 1.4 }}>
+                ⚠ {warnSpr}
+              </div>
+            )}
             {loadingSpr ? (
               <div style={{ fontSize: 12, color: C.muted, padding: '8px 0' }}>Cargando sprints desde Azure DevOps...</div>
             ) : errSpr ? (
