@@ -139,9 +139,9 @@ async function fetchProjectIterations(project) {
 
 // Sprints asignados a un equipo específico (filtra por equipo, no por proyecto).
 async function fetchTeamIterations(project, team) {
-  const data = await adoFetch(
-    `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?api-version=7.1`
-  );
+  const url = `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?api-version=7.1`;
+  const data = await adoFetch(url);
+  console.log('[fetchTeamIterations]', team, '→', (data.value || []).map(i => i.path));
   const today = new Date();
   today.setHours(12, 0, 0, 0);
   return (data.value || []).map(it => {
