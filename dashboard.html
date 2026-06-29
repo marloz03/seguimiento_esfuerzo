@@ -166,13 +166,35 @@ async function fetchTeamIterations(project, team) {
   });
 }
 
-async function wiqlIds(project, areaPath, sprintPath) {
+// Área(s) reales asignadas a un equipo en ADO (teamfieldvalues). El área de un
+// equipo NO siempre es "Proyecto\NombreEquipo", por eso hay que consultarla.
+// Devuelve una cláusula WIQL lista para usar, ej: "[System.AreaPath] UNDER 'X'".
+async function fetchTeamAreaClause(project, team) {
+  const esc = s => s.replace(/'/g, "''");
+  try {
+    const data = await adoFetch(
+      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/teamfieldvalues?api-version=7.1`
+    );
+    const vals = (data.values || []).filter(v => v && v.value);
+    console.log('[teamfieldvalues]', team, '→', vals.map(v => v.value + (v.includeChildren ? ' (+hijos)' : '')));
+    if (vals.length) {
+      return vals.map(v => v.includeChildren
+        ? `[System.AreaPath] UNDER '${esc(v.value)}'`
+        : `[System.AreaPath] = '${esc(v.value)}'`).join(' OR ');
+    }
+  } catch (e) {
+    console.warn('teamfieldvalues falló, usando Proyecto\\Equipo:', e.message);
+  }
+  return `[System.AreaPath] UNDER '${esc(project + '\\' + team)}'`;
+}
+
+async function wiqlIds(project, areaClause, sprintPath) {
   const tipos = getTipos().map(t => `'${t}'`).join(',');
   const sprintClause = sprintPath ? `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'` : '';
   const body = {
     query: `SELECT [System.Id] FROM WorkItems
             WHERE [System.TeamProject] = '${project}'
-              AND [System.AreaPath] UNDER '${areaPath}'
+              AND (${areaClause})
               AND [System.WorkItemType] IN (${tipos})
               AND [System.State] <> 'Removed'
               ${sprintClause}
@@ -258,7 +280,7 @@ function diagnoseStates(items) {
 // Queries the state of items on the LAST DAY of the sprint — so if someone
 // moved a story to another sprint after it ended, the historical snapshot
 // still reflects it correctly.
-async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+async function fetchThroughputSprint(project, areaClause, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos();
     const typeFilter = tipos.map(t => `WorkItemType eq '${t}'`).join(' or ');
@@ -296,20 +318,20 @@ async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, 
     return { sprint: sprintName, hu, sp, committedHu, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
   } catch (_) {
     // Fallback to WIQL if Analytics is unavailable
-    return fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate);
+    return fetchThroughputSprintWIQL(project, areaClause, sprintPath, sprintName, startDate, finishDate);
   }
 }
 
 // Fallback: current-state WIQL query (less accurate if sprints were modified after close)
-async function fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+async function fetchThroughputSprintWIQL(project, areaClause, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos().map(t => `'${t}'`).join(',');
     const sprintClause = `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'`;
     const [doneData, committedData] = await Promise.all([
       adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND (${areaClause}) AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
       adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND (${areaClause}) AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
     ]);
     const committedIds = (committedData.workItems || []).map(w => w.id);
     let sp = 0, committedSp = 0;
@@ -1303,7 +1325,7 @@ function App() {
     try {
       _currentProject = context.proyecto;
       setLoadingMsg('Cargando iteraciones...');
-      const areaPath = `${context.proyecto}\\${context.equipo}`;
+      const areaClause = await fetchTeamAreaClause(context.proyecto, context.equipo);
       const iterations = await fetchIterations(context.proyecto, context.equipo);
       const currentIt  = iterations.find(it => it.attributes?.timeFrame === 'current');
       const pastIts    = iterations.filter(it => it.attributes?.timeFrame === 'past');
@@ -1325,7 +1347,7 @@ function App() {
 
       // Fetch sprint items
       setLoadingMsg('Cargando items del sprint...');
-      const ids = await wiqlIds(context.proyecto, areaPath, spPath);
+      const ids = await wiqlIds(context.proyecto, areaClause, spPath);
       const rawItems = ids.length ? await fetchItemsByIds(context.proyecto, ids) : [];
       const parsed   = rawItems.map(raw => parseItem(raw));
       setItems(parsed);
@@ -1339,7 +1361,7 @@ function App() {
       const N = parseInt(cfg.THROUGHPUT_SPRINTS) || 6;
       const pastToFetch = pastIts.slice(-N);
       const historico = await Promise.all(
-        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaPath, it.path, it.name, it.attributes?.startDate?.substring(0, 10), it.attributes?.finishDate?.substring(0, 10)))
+        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaClause, it.path, it.name, it.attributes?.startDate?.substring(0, 10), it.attributes?.finishDate?.substring(0, 10)))
       );
       const doneCurrent    = parsed.filter(isDone);
       const committedCurrent = parsed.filter(i => !isRemoved(i));
