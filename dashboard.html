@@ -93,6 +93,11 @@ function getTipos() { return TIPOS_ITEM; }
 
 async function adoFetch(url, opts = {}) {
   const r = await fetch(url, { headers: hdrs(), ...opts });
+  // ADO devuelve 203 (con la página de login) cuando el PAT no autentica.
+  // Aunque 203 está en el rango 2xx, NO es un éxito: es PAT inválido/sin acceso.
+  if (r.status === 203) {
+    throw new Error(`PAT inválido o sin acceso al proyecto "${_currentProject}". Revisa PAT_${_currentProject} en config.js.`);
+  }
   if (!r.ok) {
     const body = await r.text().catch(() => '');
     throw new Error(`ADO ${r.status} → ${url.split('?')[0].split('/').slice(-2).join('/')}: ${body.substring(0, 120)}`);
