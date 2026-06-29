@@ -82,7 +82,12 @@ let _cfg = {};
 let _currentProject = '';
 
 function patFor() {
-  return (_currentProject && _cfg['PAT_' + _currentProject]) || _cfg.PAT;
+  const perProject = _currentProject && _cfg['PAT_' + _currentProject];
+  const pat = perProject || _cfg.PAT;
+  console.log('[patFor]', 'proyecto=', _currentProject,
+    '| clave PAT_' + _currentProject + (perProject ? ' ENCONTRADA' : ' NO existe → usa PAT global'),
+    '| termina en', pat ? '…' + String(pat).slice(-4) : '(vacío)');
+  return pat;
 }
 
 function hdrs() {
