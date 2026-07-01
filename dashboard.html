@@ -82,12 +82,7 @@ let _cfg = {};
 let _currentProject = '';
 
 function patFor() {
-  const perProject = _currentProject && _cfg['PAT_' + _currentProject];
-  const pat = perProject || _cfg.PAT;
-  console.log('[patFor]', 'proyecto=', _currentProject,
-    '| clave PAT_' + _currentProject + (perProject ? ' ENCONTRADA' : ' NO existe → usa PAT global'),
-    '| termina en', pat ? '…' + String(pat).slice(-4) : '(vacío)');
-  return pat;
+  return (_currentProject && _cfg['PAT_' + _currentProject]) || _cfg.PAT;
 }
 
 function hdrs() {
@@ -151,7 +146,6 @@ async function fetchProjectIterations(project) {
 async function fetchTeamIterations(project, team) {
   const url = `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?api-version=7.1`;
   const data = await adoFetch(url);
-  console.log('[fetchTeamIterations]', team, '→', (data.value || []).map(i => i.path));
   const today = new Date();
   today.setHours(12, 0, 0, 0);
   return (data.value || []).map(it => {
@@ -186,7 +180,6 @@ async function fetchTeamAreaClause(project, team) {
       `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/teamfieldvalues?api-version=7.1`
     );
     const vals = (data.values || []).filter(v => v && v.value);
-    console.log('[teamfieldvalues]', team, '→', vals.map(v => v.value + (v.includeChildren ? ' (+hijos)' : '')));
     if (vals.length) {
       return vals.map(v => v.includeChildren
         ? `[System.AreaPath] UNDER '${esc(v.value)}'`
@@ -225,6 +218,7 @@ async function fetchItemsByIds(project, ids) {
     'Microsoft.VSTS.Scheduling.StoryPoints',
     'Microsoft.VSTS.Scheduling.FinishDate',
     'Custom.Tribu', 'Custom.Departamento', 'Custom.TipodeRequerimiento',
+    'System.Tags',
   ].join(',');
   let all = [];
   for (let i = 0; i < ids.length; i += 200) {
@@ -256,6 +250,19 @@ function parseItem(raw) {
     ? (typeof a === 'object' ? (a.displayName || a.uniqueName || 'Sin asignar') : String(a))
     : 'Sin asignar';
   const state = f['System.State'] || 'Backlog';
+
+  // System.Tags viene como "#Dashboard; Change; SQUAD CONSUMO" (separado por ;).
+  const tags = (f['System.Tags'] || '').split(';').map(t => t.trim()).filter(Boolean);
+
+  // Producto de analítica: etiquetas con # (#Dashboard, #ModeloML, #Pipeline, #Analisis...).
+  const productos = tags.filter(t => t.startsWith('#')).map(t => t.slice(1).trim()).filter(Boolean);
+
+  // Tipo de requerimiento: BAU o Change desde las etiquetas; si no, del campo custom.
+  const reqFromTag = tags.map(t => {
+    const low = t.toLowerCase();
+    return low === 'bau' ? 'BAU' : low === 'change' ? 'Change' : null;
+  }).find(Boolean);
+
   return {
     id:         raw.id,
     title:      f['System.Title'] || '(sin título)',
@@ -268,7 +275,10 @@ function parseItem(raw) {
     finishDate:  f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
     tipo:       f['System.WorkItemType'] || 'User Story',
     area:       f['Custom.Tribu'] || f['Custom.Departamento'] || '',
-    tipoReq:    f['Custom.TipodeRequerimiento'] || 'BAU',
+    tipoReq:    reqFromTag || f['Custom.TipodeRequerimiento'] || 'BAU',
+    tags,                                // todas las etiquetas crudas
+    productos,                           // productos de analítica (sin #)
+    producto:   productos[0] || '',      // producto principal (primero)
   };
 }
 
@@ -629,6 +639,81 @@ function BauChangeCard({ items }) {
   );
 }
 
+// ── PRODUCTOS DE ANALÍTICA ────────────────────────────────────────────────────
+// Colores fijos para los productos conocidos; el resto usa la paleta rotativa.
+const PRODUCTO_COLORS = {
+  'Dashboard': C.magenta,
+  'ModeloML':  C.navy,
+  'Pipeline':  '#3A6BB5',
+  'Analisis':  C.green,
+};
+const PRODUCTO_PALETTE = [C.magenta, C.navy, '#3A6BB5', C.green, C.amber, '#7A4FB5', '#0E9AA7'];
+
+function ProductoCard({ items }) {
+  const committed = items.filter(i => !isRemoved(i));
+  // Un item puede tener varios productos (#Dashboard y #Pipeline): cuenta en cada uno.
+  const map = {};
+  let sinClasificar = 0;
+  committed.forEach(i => {
+    if (!i.productos || !i.productos.length) { sinClasificar++; return; }
+    i.productos.forEach(p => {
+      if (!map[p]) map[p] = { producto: p, count: 0, sp: 0 };
+      map[p].count++;
+      map[p].sp += (i.sp || 0);
+    });
+  });
+  const rows = Object.values(map).sort((a, b) => b.count - a.count);
+  const maxCount = rows.reduce((m, r) => Math.max(m, r.count), 0) || 1;
+  const colorFor = (p, idx) => PRODUCTO_COLORS[p] || PRODUCTO_PALETTE[idx % PRODUCTO_PALETTE.length];
+
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Entregables del sprint</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Productos de analítica</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12, color: C.muted, padding: '8px 0' }}>
+          Ningún item tiene etiqueta de producto (#Dashboard, #ModeloML, #Pipeline, #Analisis...).
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {rows.map((r, idx) => {
+            const color = colorFor(r.producto, idx);
+            return (
+              <div key={r.producto}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <div style={{ width: 9, height: 9, borderRadius: 2, background: color }}></div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>#{r.producto}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color }}>{r.count}</span>
+                    <span style={{ fontSize: 11, color: C.faint }}>tareas · {r.sp} SP</span>
+                  </div>
+                </div>
+                <div style={{ height: 8, borderRadius: 4, background: C.borderLight, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.round(r.count / maxCount * 100)}%`, height: '100%', background: color, borderRadius: 4 }}></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {sinClasificar > 0 && (
+        <div style={{ fontSize: 11, color: C.amber, background: C.amberBg, borderRadius: 6, padding: '6px 8px' }}>
+          ⚠ {sinClasificar} {sinClasificar === 1 ? 'item sin' : 'items sin'} etiqueta de producto.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── TEAM GRID ─────────────────────────────────────────────────────────────────
 function TeamGrid({ items, spCapacity }) {
   const [view, setView] = useState('capacidad');
@@ -889,14 +974,14 @@ function ItemsTable({ items }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['Título', 'Responsable', 'Estado', 'Área', 'Lead time', 'SP'].map((h, i) => (
+              {['Título', 'Responsable', 'Estado', 'Producto', 'Área', 'Lead time', 'SP'].map((h, i) => (
                 <th key={i} style={{ fontSize: 10, fontWeight: 600, color: C.muted, textAlign: 'left', padding: '8px 16px', background: '#FAFBFD', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {paginated.length === 0 && (
-              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: C.faint, fontSize: 13 }}>Sin items en esta categoría</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: C.faint, fontSize: 13 }}>Sin items en esta categoría</td></tr>
             )}
             {paginated.map(item => (
               <tr key={item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}
@@ -915,6 +1000,18 @@ function ItemsTable({ items }) {
                   </div>
                 </td>
                 <td style={{ padding: '0 16px', height: 46 }}><Pill state={item.state} blocked={item.blocked} cat={item.cat} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                    {(item.productos && item.productos.length)
+                      ? item.productos.map(p => (
+                          <span key={p} style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: (PRODUCTO_COLORS[p] || C.navy) + '18', color: PRODUCTO_COLORS[p] || C.navy, whiteSpace: 'nowrap' }}>#{p}</span>
+                        ))
+                      : <span style={{ color: C.faint }}>—</span>}
+                    {item.tipoReq === 'Change' && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: C.magentaLight, color: C.magenta, whiteSpace: 'nowrap' }}>Change</span>
+                    )}
+                  </div>
+                </td>
                 <td style={{ padding: '0 16px', height: 46 }}>
                   {item.area
                     ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.bg, color: C.muted, border: `1px solid ${C.border}` }}>{item.area}</span>
@@ -1456,6 +1553,9 @@ function App() {
           <BauChangeCard items={filteredItems} />
           <TeamGrid items={filteredItems} spCapacity={spCapacity} />
         </div>
+
+        {/* Productos de analítica (por etiqueta #) */}
+        <ProductoCard items={filteredItems} />
 
         {/* Throughput histórico */}
         {throughput.length > 0 && <ThroughputCard data={throughput} />}
