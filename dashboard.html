@@ -9,6 +9,7 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="config.js"></script>
+<script src="state-map.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; background: #F0F2F5; color: #0B1D3A; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
@@ -92,6 +93,11 @@ function getTipos() { return TIPOS_ITEM; }
 
 async function adoFetch(url, opts = {}) {
   const r = await fetch(url, { headers: hdrs(), ...opts });
+  // ADO devuelve 203 (con la página de login) cuando el PAT no autentica.
+  // Aunque 203 está en el rango 2xx, NO es un éxito: es PAT inválido/sin acceso.
+  if (r.status === 203) {
+    throw new Error(`PAT inválido o sin acceso al proyecto "${_currentProject}". Revisa PAT_${_currentProject} en config.js.`);
+  }
   if (!r.ok) {
     const body = await r.text().catch(() => '');
     throw new Error(`ADO ${r.status} → ${url.split('?')[0].split('/').slice(-2).join('/')}: ${body.substring(0, 120)}`);
@@ -99,7 +105,22 @@ async function adoFetch(url, opts = {}) {
   return r.json();
 }
 
-async function fetchIterations(project, _team) {
+async function fetchIterations(project, team) {
+  // 1) Si hay equipo, intenta la API por equipo (teamsettings/iterations):
+  //    devuelve SOLO los sprints asignados a ese equipo. Puede fallar por CORS
+  //    en algunos entornos; en ese caso caemos al árbol completo del proyecto.
+  if (team) {
+    try {
+      return await fetchTeamIterations(project, team);
+    } catch (e) {
+      console.warn('teamsettings/iterations falló, usando el árbol del proyecto:', e.message);
+    }
+  }
+  return fetchProjectIterations(project);
+}
+
+// Árbol de iteraciones COMPLETO del proyecto (todos los squads).
+async function fetchProjectIterations(project) {
   const data = await adoFetch(
     `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/classificationnodes/Iterations?$depth=10&api-version=7.1`
   );
@@ -121,13 +142,62 @@ async function fetchIterations(project, _team) {
   return results;
 }
 
-async function wiqlIds(project, areaPath, sprintPath) {
+// Sprints asignados a un equipo específico (filtra por equipo, no por proyecto).
+async function fetchTeamIterations(project, team) {
+  const url = `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?api-version=7.1`;
+  const data = await adoFetch(url);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  return (data.value || []).map(it => {
+    const a = it.attributes || {};
+    let timeFrame = a.timeFrame;
+    if (!timeFrame && a.startDate && a.finishDate) {
+      timeFrame = today < new Date(a.startDate) ? 'future'
+                : today > new Date(a.finishDate) ? 'past' : 'current';
+    }
+    // Normaliza el path al formato que espera el WIQL (IterationPath):
+    //   "Proyecto\...\Sprint"  — sin barra inicial y siempre con el proyecto.
+    let path = (it.path || '').replace(/^\\+/, '');
+    if (path !== project && !path.startsWith(project + '\\')) {
+      path = path ? `${project}\\${path}` : project;
+    }
+    return {
+      id: it.id,
+      name: it.name,
+      path,
+      attributes: { startDate: a.startDate, finishDate: a.finishDate, timeFrame: (timeFrame || '').toLowerCase() },
+    };
+  });
+}
+
+// Área(s) reales asignadas a un equipo en ADO (teamfieldvalues). El área de un
+// equipo NO siempre es "Proyecto\NombreEquipo", por eso hay que consultarla.
+// Devuelve una cláusula WIQL lista para usar, ej: "[System.AreaPath] UNDER 'X'".
+async function fetchTeamAreaClause(project, team) {
+  const esc = s => s.replace(/'/g, "''");
+  try {
+    const data = await adoFetch(
+      `https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/${encodeURIComponent(team)}/_apis/work/teamsettings/teamfieldvalues?api-version=7.1`
+    );
+    const vals = (data.values || []).filter(v => v && v.value);
+    if (vals.length) {
+      return vals.map(v => v.includeChildren
+        ? `[System.AreaPath] UNDER '${esc(v.value)}'`
+        : `[System.AreaPath] = '${esc(v.value)}'`).join(' OR ');
+    }
+  } catch (e) {
+    console.warn('teamfieldvalues falló, usando Proyecto\\Equipo:', e.message);
+  }
+  return `[System.AreaPath] UNDER '${esc(project + '\\' + team)}'`;
+}
+
+async function wiqlIds(project, areaClause, sprintPath) {
   const tipos = getTipos().map(t => `'${t}'`).join(',');
   const sprintClause = sprintPath ? `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'` : '';
   const body = {
     query: `SELECT [System.Id] FROM WorkItems
             WHERE [System.TeamProject] = '${project}'
-              AND [System.AreaPath] UNDER '${areaPath}'
+              AND (${areaClause})
               AND [System.WorkItemType] IN (${tipos})
               AND [System.State] <> 'Removed'
               ${sprintClause}
@@ -148,6 +218,7 @@ async function fetchItemsByIds(project, ids) {
     'Microsoft.VSTS.Scheduling.StoryPoints',
     'Microsoft.VSTS.Scheduling.FinishDate',
     'Custom.Tribu', 'Custom.Departamento', 'Custom.TipodeRequerimiento',
+    'System.Tags',
   ].join(',');
   let all = [];
   for (let i = 0; i < ids.length; i += 200) {
@@ -160,31 +231,76 @@ async function fetchItemsByIds(project, ids) {
   return all;
 }
 
+// ── STATE NORMALIZATION ───────────────────────────────────────────────────────
+// Maps a raw ADO state name to a normalized category using state-map.js.
+// Returns null when the state is not in the dictionary (flagged by diagnostics).
+const STATE_MAP = window.STATE_MAP || {};
+function stateEntry(state) { return STATE_MAP[state] || null; }
+function categoryOf(state) { const e = stateEntry(state); return e ? e.category : null; }
+function isBlockedState(state) { const e = stateEntry(state); return !!(e && e.blocked); }
+const isDone       = i => i.cat === 'Completed';
+const isInProgress = i => i.cat === 'InProgress';
+const isProposed   = i => i.cat === 'Proposed';
+const isRemoved    = i => i.cat === 'Removed';
+
 function parseItem(raw) {
   const f = raw.fields;
   const a = f['System.AssignedTo'];
   const assignedTo = a
     ? (typeof a === 'object' ? (a.displayName || a.uniqueName || 'Sin asignar') : String(a))
     : 'Sin asignar';
+  const state = f['System.State'] || 'Backlog';
+
+  // System.Tags viene como "#Dashboard; Change; SQUAD CONSUMO" (separado por ;).
+  const tags = (f['System.Tags'] || '').split(';').map(t => t.trim()).filter(Boolean);
+
+  // Producto de analítica: etiquetas con # (#Dashboard, #ModeloML, #Pipeline, #Analisis...).
+  const productos = tags.filter(t => t.startsWith('#')).map(t => t.slice(1).trim()).filter(Boolean);
+
+  // Tipo de requerimiento: BAU o Change desde las etiquetas; si no, del campo custom.
+  const reqFromTag = tags.map(t => {
+    const low = t.toLowerCase();
+    return low === 'bau' ? 'BAU' : low === 'change' ? 'Change' : null;
+  }).find(Boolean);
+
   return {
     id:         raw.id,
     title:      f['System.Title'] || '(sin título)',
-    state:      f['System.State'] || 'Backlog',
+    state,
+    cat:        categoryOf(state),   // normalized category (or null if unmapped)
+    blocked:    isBlockedState(state),
     assignedTo,
     sp:          f['Microsoft.VSTS.Scheduling.StoryPoints'] || 0,
     createdDate: f['System.CreatedDate'] ? f['System.CreatedDate'].substring(0, 10) : null,
     finishDate:  f['Microsoft.VSTS.Scheduling.FinishDate'] ? f['Microsoft.VSTS.Scheduling.FinishDate'].substring(0, 10) : null,
     tipo:       f['System.WorkItemType'] || 'User Story',
     area:       f['Custom.Tribu'] || f['Custom.Departamento'] || '',
-    tipoReq:    f['Custom.TipodeRequerimiento'] || 'BAU',
+    tipoReq:    reqFromTag || f['Custom.TipodeRequerimiento'] || 'BAU',
+    tags,                                // todas las etiquetas crudas
+    productos,                           // productos de analítica (sin #)
+    producto:   productos[0] || '',      // producto principal (primero)
   };
+}
+
+// Diagnostic: returns distinct states found in items, each with its mapped
+// category (or null). Used by the diagnostic panel to flag unmapped states.
+function diagnoseStates(items) {
+  const map = {};
+  items.forEach(i => {
+    if (!map[i.state]) map[i.state] = { state: i.state, cat: i.cat, count: 0 };
+    map[i.state].count++;
+  });
+  return Object.values(map).sort((a, b) => {
+    if ((a.cat === null) !== (b.cat === null)) return a.cat === null ? -1 : 1;
+    return b.count - a.count;
+  });
 }
 
 // Throughput for a single past sprint using Analytics WorkItemSnapshot.
 // Queries the state of items on the LAST DAY of the sprint — so if someone
 // moved a story to another sprint after it ended, the historical snapshot
 // still reflects it correctly.
-async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+async function fetchThroughputSprint(project, areaClause, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos();
     const typeFilter = tipos.map(t => `WorkItemType eq '${t}'`).join(' or ');
@@ -222,20 +338,20 @@ async function fetchThroughputSprint(project, areaPath, sprintPath, sprintName, 
     return { sprint: sprintName, hu, sp, committedHu, committedSp, startDate: startDate || null, finishDate: finishDate || null, current: false };
   } catch (_) {
     // Fallback to WIQL if Analytics is unavailable
-    return fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate);
+    return fetchThroughputSprintWIQL(project, areaClause, sprintPath, sprintName, startDate, finishDate);
   }
 }
 
 // Fallback: current-state WIQL query (less accurate if sprints were modified after close)
-async function fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintName, startDate, finishDate) {
+async function fetchThroughputSprintWIQL(project, areaClause, sprintPath, sprintName, startDate, finishDate) {
   try {
     const tipos = getTipos().map(t => `'${t}'`).join(',');
     const sprintClause = `AND [System.IterationPath] = '${sprintPath.replace(/'/g, "''")}'`;
     const [doneData, committedData] = await Promise.all([
       adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND (${areaClause}) AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] = 'Done'` }) }),
       adoFetch(`https://dev.azure.com/${_cfg.ORG}/${encodeURIComponent(project)}/_apis/wit/wiql?api-version=7.1`,
-        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND [System.AreaPath] UNDER '${areaPath}' AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
+        { method: 'POST', body: JSON.stringify({ query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${project}' AND (${areaClause}) AND [System.WorkItemType] IN (${tipos}) ${sprintClause} AND [System.State] <> 'Removed'` }) }),
     ]);
     const committedIds = (committedData.workItems || []).map(w => w.id);
     let sp = 0, committedSp = 0;
@@ -256,30 +372,26 @@ async function fetchThroughputSprintWIQL(project, areaPath, sprintPath, sprintNa
 }
 
 // ── COMPUTE ───────────────────────────────────────────────────────────────────
-const IN_PROGRESS = ['Doing', 'Entendimiento'];
+// All metrics work off the normalized category (i.cat), so they behave the same
+// across every tribe regardless of the literal state names.
 
 function computeStats(items) {
-  const committed   = items.filter(i => i.state !== 'Removed');
-  const done        = items.filter(i => i.state === 'Done');
-  const blocked     = items.filter(i => i.state === 'Bloqueado');
-  const doing       = items.filter(i => i.state === 'Doing');
-  const entend      = items.filter(i => i.state === 'Entendimiento');
-  const review      = items.filter(i => i.state === 'Revisión Calidad');
-  const backlog     = items.filter(i => i.state === 'Backlog');
+  const committed   = items.filter(i => !isRemoved(i));
+  const done        = items.filter(isDone);
+  const inProgress  = items.filter(isInProgress);
+  const proposed    = items.filter(isProposed);
+  const blocked     = items.filter(i => i.blocked);
   const sum         = arr => arr.reduce((s, i) => s + (i.sp || 0), 0);
   const spTotal     = sum(committed);
   const spDone      = sum(done);
-  const spDoing     = sum(doing);
-  const spEntend    = sum(entend);
-  const spReview    = sum(review);
+  const spInProgress= sum(inProgress);
+  const spProposed  = sum(proposed);
   const spBlocked   = sum(blocked);
-  const spBacklog   = sum(backlog);
   const pctItems    = committed.length ? Math.round(done.length / committed.length * 100) : 0;
   const pctSP       = spTotal ? Math.round(spDone / spTotal * 100) : 0;
-  const atrasados   = committed.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
-  return { committed, done, blocked, doing, entend, review, backlog,
-           spTotal, spDone, spDoing, spEntend, spReview, spBlocked, spBacklog,
-           pctItems, pctSP, atrasados };
+  return { committed, done, inProgress, proposed, blocked,
+           spTotal, spDone, spInProgress, spProposed, spBlocked,
+           pctItems, pctSP };
 }
 
 function computeTeam(items, capacity) {
@@ -289,8 +401,8 @@ function computeTeam(items, capacity) {
     if (!m[n]) m[n] = { name: n, items: [], spTotal: 0, spDone: 0, spDoing: 0 };
     m[n].items.push(item);
     m[n].spTotal += (item.sp || 0);
-    if (item.state === 'Done') m[n].spDone += (item.sp || 0);
-    if (IN_PROGRESS.includes(item.state)) m[n].spDoing += (item.sp || 0);
+    if (isDone(item))       m[n].spDone  += (item.sp || 0);
+    if (isInProgress(item)) m[n].spDoing += (item.sp || 0);
   });
   return Object.values(m).map(p => ({
     ...p, capacity,
@@ -326,16 +438,11 @@ function formatShortDate(iso) {
   return new Date(iso).toLocaleDateString('es-EC', { day: '2-digit', month: 'short' });
 }
 function urgencyScore(item) {
-  const d = diasAtraso(item.due, item.state);
-  if (item.state === 'Bloqueado') return 0;
-  if (d && d > 3) return 1;
-  if (d && d > 0) return 2;
-  if (item.state === 'Doing') return 3;
-  if (item.state === 'Entendimiento') return 3.5;
-  if (item.state === 'Revisión Calidad') return 4;
-  if (item.state === 'Backlog') return 5;
-  if (item.state === 'Done') return 99;
-  return 6;
+  if (item.blocked)        return 0;   // blocked first
+  if (isInProgress(item))  return 3;   // then in-progress
+  if (isProposed(item))    return 5;   // then not started
+  if (isDone(item))        return 99;  // done last
+  return 6;                            // unmapped states near the end
 }
 
 const PERSON_COLORS = ["#0B4DB5","#8B1A6B","#1B6E5E","#7B3FB5","#B54A00","#005C80","#6B4A00","#3A6B00","#7B2000","#005C5C"];
@@ -381,9 +488,9 @@ function Avatar({ name, size = 32 }) {
 
 // ── LEAD TIME CELL ────────────────────────────────────────────────────────────
 function LeadTimeCell({ item }) {
-  const { state, createdDate, finishDate } = item;
+  const { createdDate, finishDate } = item;
   if (!createdDate) return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
-  if (state === 'Done') {
+  if (isDone(item)) {
     const end   = finishDate ? new Date(finishDate) : TODAY;
     const days  = Math.max(0, Math.round((end - new Date(createdDate)) / 86400000));
     return (
@@ -393,7 +500,7 @@ function LeadTimeCell({ item }) {
       </div>
     );
   }
-  if (state === 'Backlog') return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
+  if (isProposed(item)) return <span style={{ color: C.faint, fontSize: 12 }}>—</span>;
   const elapsed = Math.max(0, Math.round((TODAY - new Date(createdDate)) / 86400000));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -404,17 +511,24 @@ function LeadTimeCell({ item }) {
 }
 
 // ── PILL ──────────────────────────────────────────────────────────────────────
-const STATE_STYLE = {
-  'Done':             { bg: '#EBF5F0', color: '#0D5232',  label: 'Done' },
-  'Doing':            { bg: '#EBF0FA', color: '#0B3F8A',  label: 'Doing' },
-  'Entendimiento':    { bg: '#E6F4F1', color: '#0E5E4A',  label: 'Entendimiento' },
-  'Revisión Calidad': { bg: '#F0EDF9', color: '#5A3A99',  label: 'En revisión' },
-  'Bloqueado':        { bg: C.redBg,   color: C.red,      label: 'Bloqueado' },
-  'Backlog':          { bg: '#F2F3F5', color: C.muted,    label: 'Backlog' },
+// Pill color is driven by the normalized category (works for any tribe);
+// the label shows the real ADO state name. Blocked states and unmapped
+// states get their own distinct styling.
+const CAT_STYLE = {
+  'Completed':  { bg: '#EBF5F0', color: '#0D5232' },
+  'InProgress': { bg: '#EBF0FA', color: '#0B3F8A' },
+  'Proposed':   { bg: '#F2F3F5', color: C.muted },
+  'Removed':    { bg: '#F2F3F5', color: C.faint },
 };
-function Pill({ state }) {
-  const s = STATE_STYLE[state] || STATE_STYLE['Backlog'];
-  return <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 4, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>{s.label}</span>;
+function Pill({ state, blocked, cat }) {
+  let s;
+  if (cat == null)     s = { bg: C.amberBg, color: C.amber };   // unmapped → warning
+  else if (blocked)    s = { bg: C.redBg,   color: C.red };
+  else                 s = CAT_STYLE[cat] || CAT_STYLE['Proposed'];
+  return <span title={cat == null ? 'Estado no normalizado — agrégalo a state-map.js' : cat}
+    style={{ display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 4, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>
+    {cat == null ? '⚠ ' : ''}{state}
+  </span>;
 }
 
 // ── KPI CARD ──────────────────────────────────────────────────────────────────
@@ -433,14 +547,14 @@ function KpiCard({ label, value, valueColor, sub, icon, iconColor }) {
 
 // ── ESFUERZO CARD ─────────────────────────────────────────────────────────────
 function EsfuerzoCard({ stats }) {
-  const { spDone, spDoing, spEntend, spReview, spBlocked, spBacklog, spTotal } = stats;
+  const { spDone, spInProgress, spBlocked, spProposed, spTotal } = stats;
+  // En progreso se separa en "bloqueado" vs el resto en curso.
+  const spActive = Math.max(0, spInProgress - spBlocked);
   const segs = [
-    { label: 'Entregado',      sp: spDone,   color: C.magenta },
-    { label: 'En progreso',    sp: spDoing,  color: '#3A6BB5' },
-    { label: 'Entendimiento',  sp: spEntend, color: '#2E8B6A' },
-    { label: 'En revisión',    sp: spReview, color: '#7B5EA7' },
-    { label: 'Bloqueado',      sp: spBlocked,color: C.red },
-    { label: 'Pendiente',      sp: spBacklog,color: C.faint },
+    { label: 'Entregado',   sp: spDone,     color: C.magenta },
+    { label: 'En progreso', sp: spActive,   color: '#3A6BB5' },
+    { label: 'Bloqueado',   sp: spBlocked,  color: C.red },
+    { label: 'Pendiente',   sp: spProposed, color: C.faint },
   ].filter(s => s.sp > 0);
 
   return (
@@ -481,7 +595,7 @@ function EsfuerzoCard({ stats }) {
 
 // ── BAU VS CHANGE ─────────────────────────────────────────────────────────────
 function BauChangeCard({ items }) {
-  const committed = items.filter(i => i.state !== 'Removed');
+  const committed = items.filter(i => !isRemoved(i));
   const bau       = committed.filter(i => i.tipoReq !== 'Change');
   const change    = committed.filter(i => i.tipoReq === 'Change');
   const spTotal   = committed.reduce((s, i) => s + (i.sp || 0), 0);
@@ -525,6 +639,81 @@ function BauChangeCard({ items }) {
   );
 }
 
+// ── PRODUCTOS DE ANALÍTICA ────────────────────────────────────────────────────
+// Colores fijos para los productos conocidos; el resto usa la paleta rotativa.
+const PRODUCTO_COLORS = {
+  'Dashboard': C.magenta,
+  'ModeloML':  C.navy,
+  'Pipeline':  '#3A6BB5',
+  'Analisis':  C.green,
+};
+const PRODUCTO_PALETTE = [C.magenta, C.navy, '#3A6BB5', C.green, C.amber, '#7A4FB5', '#0E9AA7'];
+
+function ProductoCard({ items }) {
+  const committed = items.filter(i => !isRemoved(i));
+  // Un item puede tener varios productos (#Dashboard y #Pipeline): cuenta en cada uno.
+  const map = {};
+  let sinClasificar = 0;
+  committed.forEach(i => {
+    if (!i.productos || !i.productos.length) { sinClasificar++; return; }
+    i.productos.forEach(p => {
+      if (!map[p]) map[p] = { producto: p, count: 0, sp: 0 };
+      map[p].count++;
+      map[p].sp += (i.sp || 0);
+    });
+  });
+  const rows = Object.values(map).sort((a, b) => b.count - a.count);
+  const maxCount = rows.reduce((m, r) => Math.max(m, r.count), 0) || 1;
+  const colorFor = (p, idx) => PRODUCTO_COLORS[p] || PRODUCTO_PALETTE[idx % PRODUCTO_PALETTE.length];
+
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', color: C.muted, marginBottom: 4 }}>Entregables del sprint</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Productos de analítica</div>
+        </div>
+        <Icon name="layers" size={16} color={C.faint} />
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12, color: C.muted, padding: '8px 0' }}>
+          Ningún item tiene etiqueta de producto (#Dashboard, #ModeloML, #Pipeline, #Analisis...).
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {rows.map((r, idx) => {
+            const color = colorFor(r.producto, idx);
+            return (
+              <div key={r.producto}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <div style={{ width: 9, height: 9, borderRadius: 2, background: color }}></div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.navy }}>#{r.producto}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color }}>{r.count}</span>
+                    <span style={{ fontSize: 11, color: C.faint }}>tareas · {r.sp} SP</span>
+                  </div>
+                </div>
+                <div style={{ height: 8, borderRadius: 4, background: C.borderLight, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.round(r.count / maxCount * 100)}%`, height: '100%', background: color, borderRadius: 4 }}></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {sinClasificar > 0 && (
+        <div style={{ fontSize: 11, color: C.amber, background: C.amberBg, borderRadius: 6, padding: '6px 8px' }}>
+          ⚠ {sinClasificar} {sinClasificar === 1 ? 'item sin' : 'items sin'} etiqueta de producto.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── TEAM GRID ─────────────────────────────────────────────────────────────────
 function TeamGrid({ items, spCapacity }) {
   const [view, setView] = useState('capacidad');
@@ -557,7 +746,7 @@ function TeamGrid({ items, spCapacity }) {
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${team.length <= 4 ? 1 : 2}, 1fr)`, gap: 6, overflowY: 'auto', paddingRight: 2 }}>
         {team.map((p) => {
           const color = personColor(p.name);
-          const isBlocked = p.items.some(i => i.state === 'Bloqueado');
+          const isBlocked = p.items.some(i => i.blocked);
           const firstName = p.name.split(' ')[0];
 
           if (view === 'capacidad') {
@@ -565,7 +754,7 @@ function TeamGrid({ items, spCapacity }) {
             const rowBg     = p.overCapacity ? C.redBg : C.bg;
             const rowBorder = p.overCapacity ? '#F7C1C1' : C.borderLight;
             const barFill   = Math.min(p.pctCapacity, 100);
-            const doingItems = p.items.filter(i => IN_PROGRESS.includes(i.state));
+            const doingItems = p.items.filter(isInProgress);
             return (
               <div key={p.name}
                 title={doingItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items en progreso'}
@@ -592,7 +781,7 @@ function TeamGrid({ items, spCapacity }) {
           // vista avance: spDone vs spTotal
           const pctAvance = p.spTotal > 0 ? Math.min(Math.round(p.spDone / p.spTotal * 100), 100) : 0;
           const avanceColor = pctAvance === 100 ? C.green : pctAvance >= 50 ? color : C.amber;
-          const doneItems = p.items.filter(i => i.state === 'Done');
+          const doneItems = p.items.filter(isDone);
           return (
             <div key={p.name}
               title={doneItems.map(i => `${i.title} (${i.sp} SP)`).join(' · ') || 'Sin items completados'}
@@ -737,22 +926,18 @@ function ItemsTable({ items }) {
 
   const tabs = [
     { id: 'todos',      label: 'Todos',       count: items.length },
-    { id: 'bloqueados', label: 'Bloqueados',  count: items.filter(i => i.state === 'Bloqueado').length },
-    { id: 'atrasados',  label: 'Atrasados',   count: items.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; }).length },
-    { id: 'doing',      label: 'En progreso', count: items.filter(i => IN_PROGRESS.includes(i.state)).length },
-    { id: 'revision',   label: 'En revisión', count: items.filter(i => i.state === 'Revisión Calidad').length },
-    { id: 'backlog',    label: 'Backlog',     count: items.filter(i => i.state === 'Backlog').length },
-    { id: 'done',       label: 'Done',        count: items.filter(i => i.state === 'Done').length },
+    { id: 'bloqueados', label: 'Bloqueados',  count: items.filter(i => i.blocked).length },
+    { id: 'doing',      label: 'En progreso', count: items.filter(isInProgress).length },
+    { id: 'backlog',    label: 'Pendiente',   count: items.filter(isProposed).length },
+    { id: 'done',       label: 'Done',        count: items.filter(isDone).length },
   ];
 
   const visible = useMemo(() => {
     let list = [...items];
-    if      (filter === 'bloqueados') list = list.filter(i => i.state === 'Bloqueado');
-    else if (filter === 'atrasados')  list = list.filter(i => { const d = diasAtraso(i.due, i.state); return d && d > 0; });
-    else if (filter === 'doing')      list = list.filter(i => IN_PROGRESS.includes(i.state));
-    else if (filter === 'revision')   list = list.filter(i => i.state === 'Revisión Calidad');
-    else if (filter === 'backlog')    list = list.filter(i => i.state === 'Backlog');
-    else if (filter === 'done')       list = list.filter(i => i.state === 'Done');
+    if      (filter === 'bloqueados') list = list.filter(i => i.blocked);
+    else if (filter === 'doing')      list = list.filter(isInProgress);
+    else if (filter === 'backlog')    list = list.filter(isProposed);
+    else if (filter === 'done')       list = list.filter(isDone);
     return list.sort((a, b) => urgencyScore(a) - urgencyScore(b));
   }, [items, filter]);
 
@@ -789,14 +974,14 @@ function ItemsTable({ items }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {['Título', 'Responsable', 'Estado', 'Área', 'Lead time', 'SP'].map((h, i) => (
+              {['Título', 'Responsable', 'Estado', 'Producto', 'Área', 'Lead time', 'SP'].map((h, i) => (
                 <th key={i} style={{ fontSize: 10, fontWeight: 600, color: C.muted, textAlign: 'left', padding: '8px 16px', background: '#FAFBFD', borderBottom: `1px solid ${C.border}`, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {paginated.length === 0 && (
-              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: C.faint, fontSize: 13 }}>Sin items en esta categoría</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: C.faint, fontSize: 13 }}>Sin items en esta categoría</td></tr>
             )}
             {paginated.map(item => (
               <tr key={item.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}
@@ -804,7 +989,7 @@ function ItemsTable({ items }) {
                 onMouseLeave={e => e.currentTarget.style.background = ''}>
                 <td style={{ padding: '0 16px', height: 46, maxWidth: 280 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {item.state === 'Bloqueado' && <div style={{ width: 3, height: 20, borderRadius: 2, background: C.red, flexShrink: 0 }}></div>}
+                    {item.blocked && <div style={{ width: 3, height: 20, borderRadius: 2, background: C.red, flexShrink: 0 }}></div>}
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500, fontSize: 13, color: C.navy }} title={item.title}>{item.title}</div>
                   </div>
                 </td>
@@ -814,7 +999,19 @@ function ItemsTable({ items }) {
                     <span style={{ fontSize: 12, color: C.muted }}>{item.assignedTo.split(' ')[0]}</span>
                   </div>
                 </td>
-                <td style={{ padding: '0 16px', height: 46 }}><Pill state={item.state} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}><Pill state={item.state} blocked={item.blocked} cat={item.cat} /></td>
+                <td style={{ padding: '0 16px', height: 46 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                    {(item.productos && item.productos.length)
+                      ? item.productos.map(p => (
+                          <span key={p} style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: (PRODUCTO_COLORS[p] || C.navy) + '18', color: PRODUCTO_COLORS[p] || C.navy, whiteSpace: 'nowrap' }}>#{p}</span>
+                        ))
+                      : <span style={{ color: C.faint }}>—</span>}
+                    {item.tipoReq === 'Change' && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: C.magentaLight, color: C.magenta, whiteSpace: 'nowrap' }}>Change</span>
+                    )}
+                  </div>
+                </td>
                 <td style={{ padding: '0 16px', height: 46 }}>
                   {item.area
                     ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.bg, color: C.muted, border: `1px solid ${C.border}` }}>{item.area}</span>
@@ -822,7 +1019,7 @@ function ItemsTable({ items }) {
                 </td>
                 <td style={{ padding: '0 16px', height: 46 }}><LeadTimeCell item={item} /></td>
                 <td style={{ padding: '0 16px', height: 46 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: item.state === 'Done' ? C.green : C.navy }}>{item.sp || '—'}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: isDone(item) ? C.green : C.navy }}>{item.sp || '—'}</span>
                   {item.sp > 0 && <span style={{ fontSize: 11, color: C.faint, marginLeft: 3 }}>SP</span>}
                 </td>
               </tr>
@@ -905,7 +1102,7 @@ function PersonDropdown({ allNames, selected, onChange }) {
 }
 
 // ── HEADER ────────────────────────────────────────────────────────────────────
-function Header({ info, onRefresh, onChangeProject, personFilter }) {
+function Header({ info, onRefresh, onChangeProject, onDiagnostic, personFilter }) {
   return (
     <div style={{ background: C.navy, color: '#fff', padding: '0 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52, gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -930,6 +1127,11 @@ function Header({ info, onRefresh, onChangeProject, personFilter }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {personFilter}
+        <button onClick={onDiagnostic} title="Diagnóstico de estados" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', flexShrink: 0 }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
+          <Icon name="alert" size={14} color="rgba(255,255,255,0.7)" />
+        </button>
         <button onClick={onRefresh} title="Actualizar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, cursor: 'pointer', flexShrink: 0 }}
           onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.13)'}
           onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}>
@@ -948,19 +1150,29 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
   const [sprintPath,   setSprintPath]   = useState(context?.sprintPath || '');
   const [loadingSpr,   setLoadingSpr]   = useState(false);
   const [errSpr,       setErrSpr]       = useState('');
+  const [warnSpr,      setWarnSpr]      = useState('');
 
   const proyectos = cfg ? cfg.PROYECTOS.split(',').map(p => p.trim()).filter(Boolean) : [];
   const equipos   = cfg ? (cfg['EQUIPOS_' + proyecto] || '').split(',').map(e => e.trim()).filter(Boolean) : [];
 
   useEffect(() => {
-    if (proyecto) loadSprints();
-  }, [proyecto]);
+    if (proyecto && equipo) loadSprints();
+  }, [proyecto, equipo]);
 
   async function loadSprints() {
-    setLoadingSpr(true); setErrSpr(''); setSprints([]); setSprintPath('');
+    setLoadingSpr(true); setErrSpr(''); setWarnSpr(''); setSprints([]); setSprintPath('');
     try {
       _currentProject = proyecto;
-      const its = (await fetchIterations(proyecto, null)).slice().reverse();
+      let raw;
+      try {
+        raw = await fetchTeamIterations(proyecto, equipo);   // solo sprints del equipo
+      } catch (e) {
+        setWarnSpr(`No se pudo filtrar por equipo (${e.message}). Mostrando todos los sprints del proyecto.`);
+        raw = await fetchProjectIterations(proyecto);        // fallback: todo el proyecto
+      }
+      const its = raw
+        .slice()
+        .sort((a, b) => (b.attributes?.startDate || '').localeCompare(a.attributes?.startDate || ''));
       setSprints(its);
       const current = its.find(it => it.attributes?.timeFrame === 'current');
       if (current) setSprintPath(current.path);
@@ -1000,7 +1212,7 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
         {proyecto && (
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Equipo</label>
-            <select value={equipo} onChange={e => { setEquipo(e.target.value); setSprints([]); setSprintPath(''); }} style={inputStyle}>
+            <select value={equipo} onChange={e => setEquipo(e.target.value)} style={inputStyle}>
               <option value="">— Selecciona —</option>
               {equipos.map(eq => <option key={eq} value={eq}>{eq}</option>)}
             </select>
@@ -1010,17 +1222,29 @@ function ContextModal({ cfg, context, isFirst, onApply, onClose }) {
         {equipo && (
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>Sprint</label>
+            {warnSpr && (
+              <div style={{ fontSize: 11, color: C.amber, background: C.amberBg, borderRadius: 6, padding: '6px 8px', marginBottom: 8, lineHeight: 1.4 }}>
+                ⚠ {warnSpr}
+              </div>
+            )}
             {loadingSpr ? (
               <div style={{ fontSize: 12, color: C.muted, padding: '8px 0' }}>Cargando sprints desde Azure DevOps...</div>
             ) : errSpr ? (
               <div style={{ fontSize: 12, color: C.red, padding: '8px 0' }}>{errSpr}</div>
             ) : sprints.length > 0 ? (
               <select value={sprintPath} onChange={e => setSprintPath(e.target.value)} style={inputStyle}>
-                {sprints.map(it => (
-                  <option key={it.path} value={it.path}>
-                    {it.name}{it.attributes?.timeFrame === 'current' ? ' ✓ activo' : ''}
-                  </option>
-                ))}
+                {sprints.map(it => {
+                  // Ruta padre entre el proyecto y el sprint (ej. "2025 \ P2") para
+                  // distinguir sprints con el mismo nombre en distintos años/PIs.
+                  const segs = it.path.split('\\');
+                  const parent = segs.slice(1, -1).join(' \\ ');
+                  const start = it.attributes?.startDate ? it.attributes.startDate.substring(0, 10) : '';
+                  return (
+                    <option key={it.path} value={it.path}>
+                      {it.name}{parent ? ` · ${parent}` : ''}{start ? ` · ${start}` : ''}{it.attributes?.timeFrame === 'current' ? ' ✓ activo' : ''}
+                    </option>
+                  );
+                })}
               </select>
             ) : null}
           </div>
@@ -1068,6 +1292,89 @@ function ErrorScreen({ message, onRetry }) {
   );
 }
 
+// ── DIAGNOSTIC MODAL ──────────────────────────────────────────────────────────
+// Checks whether every state present in the current tribe's items is mapped in
+// state-map.js. Flags any unmapped state so it can be added to the dictionary.
+const CAT_LABEL = {
+  'Proposed':   { label: 'No iniciado', color: C.muted },
+  'InProgress': { label: 'En curso',    color: '#0B3F8A' },
+  'Completed':  { label: 'Terminado',   color: '#0D5232' },
+  'Removed':    { label: 'Descartado',  color: C.faint },
+};
+function DiagnosticModal({ items, info, onClose }) {
+  const rows = diagnoseStates(items);
+  const unmapped = rows.filter(r => r.cat == null);
+  const ok = unmapped.length === 0;
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(6,15,31,0.55)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: '26px 28px 22px', width: '100%', maxWidth: 540, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: C.navy }}>Diagnóstico de estados</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, color: C.faint, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>
+          {info.proyecto} · {info.equipo}
+        </div>
+
+        {/* Estado general */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 9,
+          background: ok ? C.greenBg : C.amberBg, border: `1px solid ${ok ? '#BFE3CF' : '#F0DBA8'}`, marginBottom: 18 }}>
+          <Icon name={ok ? 'check' : 'alert'} size={18} color={ok ? C.green : C.amber} strokeWidth={2.2} />
+          <div style={{ fontSize: 13, fontWeight: 600, color: ok ? C.green : C.amber }}>
+            {ok
+              ? 'Todos los estados de esta tribu están normalizados. Las métricas son confiables.'
+              : `${unmapped.length} estado(s) sin normalizar. Las métricas pueden estar incompletas hasta agregarlos.`}
+          </div>
+        </div>
+
+        {/* Estados sin mapear — instrucciones */}
+        {!ok && (
+          <div style={{ marginBottom: 18, padding: '14px 16px', background: '#FFF9EC', border: `1px solid #F0DBA8`, borderRadius: 9 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, marginBottom: 8 }}>Agrega esto a <code>state-map.js</code>:</div>
+            <pre style={{ fontSize: 12, fontFamily: 'monospace', color: C.navy, background: '#fff', padding: '10px 12px', borderRadius: 6, border: `1px solid ${C.border}`, overflowX: 'auto', margin: 0 }}>
+{unmapped.map(r => `  '${r.state}': { category: '???' },  // ${r.count} ítem(s)`).join('\n')}
+            </pre>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 8, lineHeight: 1.5 }}>
+              Reemplaza <code>'???'</code> por una de: <b>Proposed</b> (no iniciado), <b>InProgress</b> (en curso),
+              <b> Completed</b> (terminado) o <b>Removed</b> (descartado). Agrega <code>blocked: true</code> si el estado significa bloqueado.
+            </div>
+          </div>
+        )}
+
+        {/* Tabla de estados */}
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${C.border}` }}>Estado ADO</th>
+              <th style={{ textAlign: 'left', padding: '6px 8px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${C.border}` }}>Categoría</th>
+              <th style={{ textAlign: 'right', padding: '6px 8px', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${C.border}` }}>Ítems</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const c = r.cat ? CAT_LABEL[r.cat] : null;
+              return (
+                <tr key={r.state}>
+                  <td style={{ padding: '8px', borderBottom: `1px solid ${C.borderLight}`, fontWeight: 600, color: r.cat == null ? C.amber : C.navy }}>
+                    {r.cat == null && '⚠ '}{r.state}
+                  </td>
+                  <td style={{ padding: '8px', borderBottom: `1px solid ${C.borderLight}` }}>
+                    {c
+                      ? <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: C.bg, color: c.color }}>{c.label}</span>
+                      : <span style={{ fontSize: 11, fontWeight: 700, color: C.amber }}>SIN MAPEAR</span>}
+                  </td>
+                  <td style={{ padding: '8px', borderBottom: `1px solid ${C.borderLight}`, textAlign: 'right', color: C.muted }}>{r.count}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── APP ───────────────────────────────────────────────────────────────────────
 function App() {
   const [phase,           setPhase]          = useState('booting');
@@ -1080,6 +1387,7 @@ function App() {
   const [errorMsg,        setErrorMsg]       = useState('');
   const [loadingMsg,      setLoadingMsg]     = useState('Iniciando...');
   const [showModal,       setShowModal]      = useState(false);
+  const [showDiag,        setShowDiag]       = useState(false);
 
   // Hooks must be unconditional
   const spCapacity    = cfg ? (parseInt(cfg.SP_CAPACITY) || 13) : 13;
@@ -1124,7 +1432,7 @@ function App() {
     try {
       _currentProject = context.proyecto;
       setLoadingMsg('Cargando iteraciones...');
-      const areaPath = `${context.proyecto}\\${context.equipo}`;
+      const areaClause = await fetchTeamAreaClause(context.proyecto, context.equipo);
       const iterations = await fetchIterations(context.proyecto, context.equipo);
       const currentIt  = iterations.find(it => it.attributes?.timeFrame === 'current');
       const pastIts    = iterations.filter(it => it.attributes?.timeFrame === 'past');
@@ -1146,7 +1454,7 @@ function App() {
 
       // Fetch sprint items
       setLoadingMsg('Cargando items del sprint...');
-      const ids = await wiqlIds(context.proyecto, areaPath, spPath);
+      const ids = await wiqlIds(context.proyecto, areaClause, spPath);
       const rawItems = ids.length ? await fetchItemsByIds(context.proyecto, ids) : [];
       const parsed   = rawItems.map(raw => parseItem(raw));
       setItems(parsed);
@@ -1160,10 +1468,10 @@ function App() {
       const N = parseInt(cfg.THROUGHPUT_SPRINTS) || 6;
       const pastToFetch = pastIts.slice(-N);
       const historico = await Promise.all(
-        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaPath, it.path, it.name, it.attributes?.startDate?.substring(0, 10), it.attributes?.finishDate?.substring(0, 10)))
+        pastToFetch.map(it => fetchThroughputSprint(context.proyecto, areaClause, it.path, it.name, it.attributes?.startDate?.substring(0, 10), it.attributes?.finishDate?.substring(0, 10)))
       );
-      const doneCurrent    = parsed.filter(i => i.state === 'Done');
-      const committedCurrent = parsed.filter(i => i.state !== 'Removed');
+      const doneCurrent    = parsed.filter(isDone);
+      const committedCurrent = parsed.filter(i => !isRemoved(i));
       historico.push({
         sprint:      theIt?.name || spLabel,
         hu:          doneCurrent.length,
@@ -1218,6 +1526,7 @@ function App() {
         info={info}
         onRefresh={handleRefresh}
         onChangeProject={() => setShowModal(true)}
+        onDiagnostic={() => setShowDiag(true)}
         personFilter={
           <PersonDropdown
             allNames={allPersonNames}
@@ -1245,6 +1554,9 @@ function App() {
           <TeamGrid items={filteredItems} spCapacity={spCapacity} />
         </div>
 
+        {/* Productos de analítica (por etiqueta #) */}
+        <ProductoCard items={filteredItems} />
+
         {/* Throughput histórico */}
         {throughput.length > 0 && <ThroughputCard data={throughput} />}
 
@@ -1260,6 +1572,10 @@ function App() {
         <ContextModal cfg={cfg} context={context} isFirst={false}
           onApply={handleApplyContext}
           onClose={() => setShowModal(false)} />
+      )}
+
+      {showDiag && (
+        <DiagnosticModal items={items} info={info} onClose={() => setShowDiag(false)} />
       )}
     </div>
   );
